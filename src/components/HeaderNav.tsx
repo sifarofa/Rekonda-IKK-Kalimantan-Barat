@@ -145,23 +145,25 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={() => onSelectView('dokumen_arsip')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer relative ${
-                activeView === 'dokumen_arsip'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-              }`}
-            >
-              <FolderOpen className="w-3.5 h-3.5 text-emerald-300" />
-              <span>Dokumen</span>
-              {documentsCount > 0 && (
-                <span className="ml-1 bg-emerald-500 text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
-                  {documentsCount}
-                </span>
-              )}
-            </button>
+            {isPemilik && (
+              <button
+                type="button"
+                onClick={() => onSelectView('dokumen_arsip')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer relative ${
+                  activeView === 'dokumen_arsip'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+                }`}
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Dokumen</span>
+                {documentsCount > 0 && (
+                  <span className="ml-1 bg-emerald-500 text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                    {documentsCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Right Action Items */}
@@ -196,7 +198,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               onClick={handleUploadClick}
               title={
                 isPemilik
-                  ? 'Upload Dokumen & Unduh Template (Tabel 7.1 & IKK Responden)'
+                  ? 'Upload Dokumen & Unduh Template (Template Harga Tahun Berjalan & Tahun Sebelumnya)'
                   : 'Upload Dokumen Khusus Admin Provinsi'
               }
               className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-bold rounded-md shadow-xs transition-colors cursor-pointer border ${
@@ -273,7 +275,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 
         {/* Mobile View Switcher Tabs (Shown on small screens) */}
         <div className="sm:hidden pb-2.5 pt-0.5">
-          <div className="grid grid-cols-3 gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700/80">
+          <div className={`grid ${isPemilik ? 'grid-cols-3' : 'grid-cols-2'} gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700/80`}>
             <button
               type="button"
               onClick={() => onSelectView('rekon_daerah')}
@@ -305,23 +307,25 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={() => onSelectView('dokumen_arsip')}
-              className={`inline-flex items-center justify-center gap-1 py-1.5 rounded-md text-[11px] font-bold transition-all cursor-pointer relative ${
-                activeView === 'dokumen_arsip'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <FolderOpen className="w-3 h-3 text-emerald-300" />
-              <span>Dokumen</span>
-              {documentsCount > 0 && (
-                <span className="bg-emerald-500 text-white text-[9px] font-extrabold px-1 rounded-full">
-                  {documentsCount}
-                </span>
-              )}
-            </button>
+            {isPemilik && (
+              <button
+                type="button"
+                onClick={() => onSelectView('dokumen_arsip')}
+                className={`inline-flex items-center justify-center gap-1 py-1.5 rounded-md text-[11px] font-bold transition-all cursor-pointer relative ${
+                  activeView === 'dokumen_arsip'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <FolderOpen className="w-3 h-3 text-emerald-300" />
+                <span>Dokumen</span>
+                {documentsCount > 0 && (
+                  <span className="bg-emerald-500 text-white text-[9px] font-extrabold px-1 rounded-full">
+                    {documentsCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>

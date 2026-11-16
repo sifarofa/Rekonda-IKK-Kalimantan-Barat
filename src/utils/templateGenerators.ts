@@ -2,16 +2,15 @@ import * as XLSX from 'xlsx';
 import { KabupatenRekon, Komoditas } from '../types/rekonda';
 
 /**
- * Download Template 1: Database Tabel 7.1
+ * Download Template 1: Template Harga Tahun Berjalan
  * Digunakan untuk mengisi harga tahun berjalan (TW 3, 4 2026 dan TW 1, 2 2027)
  * yang dimasukkan ke kolom Harga 2027 & TW berjalan.
- * Sesuai dengan format database_tabel_7.1_0a44d253.csv dan image_6e674ca5.png.
  */
 export function downloadTemplateTabel71(
   currentKabupaten: KabupatenRekon[],
   komoditas: Komoditas,
   format: 'xlsx' | 'csv' = 'xlsx',
-  quarterHeaders: 'legacy_bps' | 'cycle_2027' = 'legacy_bps'
+  quarterHeaders: 'legacy_bps' | 'cycle_2027' = 'cycle_2027'
 ) {
   // Exact headers matching user's template:
   // Kode Kabupaten/Kota, Nama Kabupaten/Kota, Kode Responden, Nama Responden, Jenis Kuesioner, Nama Komoditas, Nama Kualitas, Nama Merek, kualitas rekon, kode kualitas rekon, Satuan Standar, III-2025, IV-2025, I-2026, II-2026, cv
@@ -112,9 +111,9 @@ export function downloadTemplateTabel71(
 
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'tabel 7.1');
+  XLSX.utils.book_append_sheet(wb, ws, 'harga_tahun_berjalan');
 
-  const filename = `Template_Tabel_7.1_Tahun_Berjalan_${komoditas.kode}_${new Date().toISOString().slice(0, 10)}`;
+  const filename = `Template_Harga_Tahun_Berjalan_${komoditas.kode}_${new Date().toISOString().slice(0, 10)}`;
   if (format === 'csv') {
     XLSX.writeFile(wb, `${filename}.csv`, { bookType: 'csv' });
   } else {

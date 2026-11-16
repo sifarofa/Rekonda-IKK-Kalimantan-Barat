@@ -168,7 +168,7 @@ export default function App() {
             : 'belum_rekon';
 
           const fallbackItem = INITIAL_KABUPATEN_DATA[key]?.find((k) => k.kode === item.kode);
-          const respondents = (item.respondents && item.respondents.length > 0)
+          const respondents = Array.isArray(item.respondents)
             ? item.respondents
             : (fallbackItem?.respondents || []);
 
@@ -583,7 +583,7 @@ export default function App() {
     const statTw2_27 = calculateStats(tw2_27);
 
     // Calculate available quarters average for Harga 2027
-    const availableQuarterMeans = [
+    const validQuarterMeans = [
       statTw3_26.mean,
       statTw4_26.mean,
       statTw1_27.mean,
@@ -598,32 +598,43 @@ export default function App() {
 
     const newHarga2027 = hasCalculatedLkMurni
       ? Math.round(kab.lkSewaAlat!.hasilSewaMurniBulan)
-      : availableQuarterMeans.length > 0
-      ? Math.round(availableQuarterMeans.reduce((a, b) => a + b, 0) / availableQuarterMeans.length)
-      : kab.harga2027;
+      : res.length > 0
+      ? validQuarterMeans.length > 0
+        ? Math.round(validQuarterMeans.reduce((a, b) => a + b, 0) / validQuarterMeans.length)
+        : 0
+      : kab.harga2027 || 0;
 
     // Koefisien Variasi: variasi harga antar responden di kab/kota yang sama (tahun berjalan)
     const allCurrentPrices = res
       .filter((r) => (r.tahun === 2026 && (r.triwulan === 3 || r.triwulan === 4)) || (r.tahun === 2027 && (r.triwulan === 1 || r.triwulan === 2)))
-      .map((r) => r.harga);
-    
-    const respondentStats = calculateStats(allCurrentPrices.length > 0 ? allCurrentPrices : [kab.harga2027]);
+      .map((r) => r.harga)
+      .filter((p) => p > 0);
+
+    const respondentStats =
+      allCurrentPrices.length > 0
+        ? calculateStats(allCurrentPrices)
+        : { mean: 0, sd: 0, cv: 0 };
 
     // Dominant Brand (Mode)
-    const newDominantBrand = getDominantBrand(res, kab.namaKualitas || 'Standar');
+    const newDominantBrand =
+      newHarga2027 > 0
+        ? getDominantBrand(res, kab.namaKualitas && kab.namaKualitas !== '-' ? kab.namaKualitas : 'Standar')
+        : '-';
 
-    // Rasio: (Harga 2027 / Harga 2026) * 100 (0 jika 2026 tidak dicacah / 0)
+    // Rasio: (Harga 2027 / Harga 2026) * 100 (0 jika salah satu kosong)
     const newRasio =
-      kab.harga2026 > 0 ? parseFloat(((newHarga2027 / kab.harga2026) * 100).toFixed(2)) : 0;
+      newHarga2027 > 0 && kab.harga2026 > 0
+        ? parseFloat(((newHarga2027 / kab.harga2026) * 100).toFixed(2))
+        : 0;
 
     return {
       ...kab,
-      hargaTw3_2026: statTw3_26.mean > 0 ? statTw3_26.mean : kab.hargaTw3_2026,
-      hargaTw4_2026: statTw4_26.mean > 0 ? statTw4_26.mean : kab.hargaTw4_2026,
-      hargaTw1_2027: statTw1_27.mean > 0 ? statTw1_27.mean : kab.hargaTw1_2027,
-      hargaTw2_2027: statTw2_27.mean > 0 ? statTw2_27.mean : kab.hargaTw2_2027,
+      hargaTw3_2026: res.length > 0 ? statTw3_26.mean : kab.hargaTw3_2026 || 0,
+      hargaTw4_2026: res.length > 0 ? statTw4_26.mean : kab.hargaTw4_2026 || 0,
+      hargaTw1_2027: res.length > 0 ? statTw1_27.mean : kab.hargaTw1_2027 || 0,
+      hargaTw2_2027: res.length > 0 ? statTw2_27.mean : kab.hargaTw2_2027 || 0,
       harga2027: newHarga2027,
-      koefisienVariasi: respondentStats.cv,
+      koefisienVariasi: res.length > 0 ? respondentStats.cv : newHarga2027 > 0 ? kab.koefisienVariasi : 0,
       namaKualitas: newDominantBrand,
       rasio: newRasio
     };
@@ -1004,31 +1015,77 @@ export default function App() {
     }
   };
 
-  // Upload Apply Data
+  // Guard Dokumen & Arsip view strictly for Admin Provinsi
+  useEffect(() => {
+    const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
+    if (activeView === 'dokumen_arsip' && !isPemilik) {
+      setActiveView(currentUser.role === 'kabupaten' ? 'anomali_rekon' : 'rekon_daerah');
+    }
+  }, [activeView, currentUser.isOwner, currentUser.role]);
+
+  // Upload Apply Data (Supports Multi-Commodity & Single-Commodity updates)
   const handleApplyUploadedData = (
-    updatedList: KabupatenRekon[],
-    sheetType: 'rekonda26' | 'tabel71'
+    updatedDatabaseSlice: Record<string, KabupatenRekon[]>,
+    sheetType: 'rekonda26' | 'tabel71',
+    summary?: { updatedCommoditiesCount: number; isMultiCommodity: boolean }
   ) => {
-    const isSewa = isSewaAlatKomoditas(selectedKomoditas.kode);
-    const recomputed = updatedList.map((item) => {
-      const metric = recalculateKabupatenMetrics(item, isSewa);
-      if (sheetType === 'rekonda26') {
-        metric.harga2026 = item.harga2026;
-        metric.hargaTw3_2025 = item.hargaTw3_2025;
-        metric.hargaTw4_2025 = item.hargaTw4_2025;
-        metric.hargaTw1_2026 = item.hargaTw1_2026;
-        metric.hargaTw2_2026 = item.hargaTw2_2026;
-        metric.rasio = (item.harga2026 > 0 && metric.harga2027 > 0)
-          ? parseFloat(((metric.harga2027 / item.harga2026) * 100).toFixed(2))
-          : 0;
-      }
-      return metric;
+    const recomputedSlice: Record<string, KabupatenRekon[]> = {};
+
+    for (const [key, updatedList] of Object.entries(updatedDatabaseSlice)) {
+      const komKode = key.split('_')[1] || selectedKomoditas.kode;
+      const isSewa = isSewaAlatKomoditas(komKode);
+
+      recomputedSlice[key] = updatedList.map((item) => {
+        const metric = recalculateKabupatenMetrics(item, isSewa);
+        if (sheetType === 'rekonda26') {
+          metric.harga2026 = item.harga2026;
+          metric.hargaTw3_2025 = item.hargaTw3_2025;
+          metric.hargaTw4_2025 = item.hargaTw4_2025;
+          metric.hargaTw1_2026 = item.hargaTw1_2026;
+          metric.hargaTw2_2026 = item.hargaTw2_2026;
+          metric.rasio =
+            item.harga2026 > 0 && metric.harga2027 > 0
+              ? parseFloat(((metric.harga2027 / item.harga2026) * 100).toFixed(2))
+              : 0;
+        }
+        return metric;
+      });
+    }
+
+    setDatabase((prev) => {
+      const nextDb = {
+        ...prev,
+        ...recomputedSlice
+      };
+
+      syncedOverridesRef.current = {
+        ...syncedOverridesRef.current,
+        ...recomputedSlice
+      };
+
+      const actor = currentUser.email || currentUser.name || 'Admin Provinsi';
+      syncRekondaOverridesToSupabase(syncedOverridesRef.current, actor).catch((err) => {
+        console.warn('Supabase database sync notice:', err);
+      });
+
+      fetch('/api/save-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ database: nextDb })
+      }).catch((err) => console.log('Server sync notice:', err));
+
+      return nextDb;
     });
-    saveUpdatedList(recomputed);
+
+    const countLabel = summary?.updatedCommoditiesCount || Object.keys(recomputedSlice).length;
     showToast(
       sheetType === 'rekonda26'
-        ? 'Data tahun sebelumnya (IKK Rekonda Responden) berhasil disinkronkan ke kolom Harga 2026!'
-        : 'Data tahun berjalan (Database Tabel 7.1) berhasil diperbarui ke kolom Harga 2027!'
+        ? summary?.isMultiCommodity
+          ? `Data Harga Tahun Sebelumnya untuk ${countLabel} komoditas/kualitas berhasil diperbarui ke kolom Harga 2026!`
+          : 'Data tahun sebelumnya berhasil disinkronkan ke kolom Harga 2026!'
+        : summary?.isMultiCommodity
+        ? `Data Harga Tahun Berjalan untuk ${countLabel} komoditas/kualitas berhasil diperbarui ke kolom Harga 2027!`
+        : 'Data Harga Tahun Berjalan berhasil diperbarui ke kolom Harga 2027!'
     );
   };
 
@@ -1154,7 +1211,9 @@ export default function App() {
     : null;
 
   const anomalyCount = currentKabupatenData.filter(
-    (d) => d.koefisienVariasi > 20 || (d.harga2026 > 0 && (d.rasio > 120 || d.rasio < 80))
+    (d) =>
+      (d.harga2027 > 0 && d.koefisienVariasi > 20) ||
+      (d.harga2027 > 0 && d.harga2026 > 0 && (d.rasio > 120 || d.rasio < 80))
   ).length;
 
   // If Landing Login is requested or active
@@ -1184,6 +1243,11 @@ export default function App() {
       <Sidebar
         activeView={activeView}
         onSelectView={(v) => {
+          const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
+          if (v === 'dokumen_arsip' && !isPemilik) {
+            showToast('Akses terbatas: Menu Dokumen & Arsip khusus Admin Provinsi.');
+            return;
+          }
           if (currentUser.role === 'kabupaten' && v === 'rekon_daerah') {
             showToast(`Perhatian: Akun Admin Kab/Kota [${currentUser.kabupatenKode}] berfokus pada penyelesaian Tabel Anomali Rekon.`);
           }
@@ -1223,6 +1287,11 @@ export default function App() {
             onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
             activeView={activeView}
             onSelectView={(v) => {
+              const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
+              if (v === 'dokumen_arsip' && !isPemilik) {
+                showToast('Akses terbatas: Menu Dokumen & Arsip khusus Admin Provinsi.');
+                return;
+              }
               if (currentUser.role === 'kabupaten' && v === 'rekon_daerah') {
                 showToast(`Perhatian: Akun Admin Kab/Kota [${currentUser.kabupatenKode}] berfokus pada penyelesaian Tabel Anomali Rekon.`);
               }
@@ -1423,13 +1492,16 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {/* Document Upload Modal (rekonda26 & tabel 7.1) */}
+      {/* Document Upload Modal (rekonda26 & Harga Tahun Berjalan) */}
       <UploadModal
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
         currentUser={currentUser}
         onOpenAuth={() => setIsAuthModalOpen(true)}
         currentData={currentKabupatenData}
+        database={database}
+        komoditasList={KOMODITAS_LIST}
+        provinsiKode={selectedProvinsi.kode}
         onApplyData={handleApplyUploadedData}
         selectedKomoditas={selectedKomoditas}
         onQuickLoginAsOwner={() => handleLogin('harga6100@gmail.com', 'Admin Rekonda')}

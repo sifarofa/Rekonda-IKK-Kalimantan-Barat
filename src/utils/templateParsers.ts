@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
-import { KabupatenRekon, RespondenData } from '../types/rekonda';
-import { calculateStats, getDominantBrand } from './formatters';
+import { KabupatenRekon, Komoditas, RespondenData } from '../types/rekonda';
+import { calculateStats } from './formatters';
 
 export interface ComparisonItem {
   kode: string;
@@ -22,6 +22,17 @@ export interface ParseResult {
   affectedKabCount: number;
   detectedCommodities: string[];
   rawRows: any[];
+}
+
+export interface MultiParseResult {
+  updatedDatabase: Record<string, KabupatenRekon[]>;
+  previewResult: ParseResult;
+  previewKomoditasKode: string;
+  totalRows: number;
+  updatedCommoditiesCount: number;
+  totalCommoditiesInFile: number;
+  totalAffectedKabEntries: number;
+  isMultiCommodity: boolean;
 }
 
 /**
@@ -225,9 +236,10 @@ export function findMatchingKabupaten(
 }
 
 /**
- * Process File 1: Database Tabel 7.1
+ * Process File 1: Template Harga Tahun Berjalan (Database Tabel 7.1)
  * Digunakan untuk mengisi HARGA TAHUN BERJALAN (TW 3, 4 2026 dan TW 1, 2 2027)
  * yang dimasukkan ke kolom HARGA 2027 & TW berjalan.
+ * Triwulan yang belum ada nilainya (mis. TW 1 & 2 2027) dan Kab/Kota tanpa data diisi 0 (tampil '-').
  */
 export function processTabel71Upload(
   rows: any[],
@@ -241,6 +253,25 @@ export function processTabel71Upload(
 
   const detectedCommoditiesSet = new Set<string>();
 
+  // Detect whether file explicitly uses 2026/2027 headers so I-2027 never falls back to legacy I-2026
+  const hasCycle2027Headers = rows.some((r) => {
+    const keys = Object.keys(r);
+    return keys.some((k) =>
+      k === 'III-2026' ||
+      k === 'IV-2026' ||
+      k === 'I-2027' ||
+      k === 'II-2027' ||
+      k === 'TW III 2026' ||
+      k === 'TW IV 2026' ||
+      k === 'TW I 2027' ||
+      k === 'TW II 2027' ||
+      k === 'tw3_2026' ||
+      k === 'tw4_2026' ||
+      k === 'tw1_2027' ||
+      k === 'tw2_2027'
+    );
+  });
+
   // Group raw rows by target kabupaten
   const groupedRows: Record<string, any[]> = {};
 
@@ -252,7 +283,6 @@ export function processTabel71Upload(
     const label = qualCode ? `[${qualCode}] ${comm || qual}` : (kqr || comm);
     if (label) detectedCommoditiesSet.add(label);
 
-    // Filter commodity if specified (supports matching 4-digit kode kualitas rekon or commodity name)
     if (commodityFilter && commodityFilter !== 'ALL') {
       const q = commodityFilter.toLowerCase().trim();
       const filterCodeMatch = q.match(/\[?(\d{4})\]?/);
@@ -297,12 +327,21 @@ export function processTabel71Upload(
   const comparison: ComparisonItem[] = [];
   let affectedKabCount = 0;
 
-  // Process each Kabupaten with matching rows
+  // Process all 14 Kabupaten: matched get exact uploaded quarters (missing quarters -> 0/'-'), unmatched get 0/'-'
   updatedList.forEach((kab) => {
     const kabRows = groupedRows[kab.kode];
-    if (!kabRows || kabRows.length === 0) return;
-
-    affectedKabCount++;
+    if (!kabRows || kabRows.length === 0) {
+      kab.hargaTw3_2026 = 0;
+      kab.hargaTw4_2026 = 0;
+      kab.hargaTw1_2027 = 0;
+      kab.hargaTw2_2027 = 0;
+      kab.harga2027 = 0;
+      kab.koefisienVariasi = 0;
+      kab.rasio = 0;
+      kab.namaKualitas = '-';
+      kab.respondents = [];
+      return;
+    }
 
     const tw3Prices: number[] = [];
     const tw4Prices: number[] = [];
@@ -313,23 +352,18 @@ export function processTabel71Upload(
     const brandCounts: Record<string, number> = {};
 
     kabRows.forEach((r, idx) => {
-      // Find quarter values
-      // Support TW 3 2026 (or legacy III-2025 in old file)
-      const pTw3 = parsePrice(
-        r['III-2026'] ?? r['TW III 2026'] ?? r['tw3_2026'] ?? r['III 2026'] ?? r['III-2025'] ?? r['TW III 2025']
-      );
-      // TW 4 2026 (or legacy IV-2025)
-      const pTw4 = parsePrice(
-        r['IV-2026'] ?? r['TW IV 2026'] ?? r['tw4_2026'] ?? r['IV 2026'] ?? r['IV-2025'] ?? r['TW IV 2025']
-      );
-      // TW 1 2027 (or legacy I-2026)
-      const pTw1 = parsePrice(
-        r['I-2027'] ?? r['TW I 2027'] ?? r['tw1_2027'] ?? r['I 2027'] ?? r['I-2026'] ?? r['TW I 2026']
-      );
-      // TW 2 2027 (or legacy II-2026)
-      const pTw2 = parsePrice(
-        r['II-2027'] ?? r['TW II 2027'] ?? r['tw2_2027'] ?? r['II 2027'] ?? r['II-2026'] ?? r['TW II 2026']
-      );
+      const pTw3 = hasCycle2027Headers
+        ? parsePrice(r['III-2026'] ?? r['TW III 2026'] ?? r['tw3_2026'] ?? r['III 2026'])
+        : parsePrice(r['III-2026'] ?? r['TW III 2026'] ?? r['tw3_2026'] ?? r['III 2026'] ?? r['III-2025'] ?? r['TW III 2025']);
+      const pTw4 = hasCycle2027Headers
+        ? parsePrice(r['IV-2026'] ?? r['TW IV 2026'] ?? r['tw4_2026'] ?? r['IV 2026'])
+        : parsePrice(r['IV-2026'] ?? r['TW IV 2026'] ?? r['tw4_2026'] ?? r['IV 2026'] ?? r['IV-2025'] ?? r['TW IV 2025']);
+      const pTw1 = hasCycle2027Headers
+        ? parsePrice(r['I-2027'] ?? r['TW I 2027'] ?? r['tw1_2027'] ?? r['I 2027'])
+        : parsePrice(r['I-2027'] ?? r['TW I 2027'] ?? r['tw1_2027'] ?? r['I 2027'] ?? r['I-2026'] ?? r['TW I 2026']);
+      const pTw2 = hasCycle2027Headers
+        ? parsePrice(r['II-2027'] ?? r['TW II 2027'] ?? r['tw2_2027'] ?? r['II 2027'])
+        : parsePrice(r['II-2027'] ?? r['TW II 2027'] ?? r['tw2_2027'] ?? r['II 2027'] ?? r['II-2026'] ?? r['TW II 2026']);
 
       const resName = String(
         r['Nama Responden'] ?? r['Nama R'] ?? r['Responden'] ?? `Responden ${idx + 1}`
@@ -339,11 +373,10 @@ export function processTabel71Upload(
         r['Nama Merek'] ?? r['Nama Kualitas'] ?? r['kualitas rekon'] ?? r['Merek'] ?? 'Standar'
       ).trim();
 
-      if (resMerk) {
+      if (resMerk && (pTw3 > 0 || pTw4 > 0 || pTw1 > 0 || pTw2 > 0)) {
         brandCounts[resMerk] = (brandCounts[resMerk] || 0) + 1;
       }
 
-      // Add to quarter collectors
       if (pTw3 > 0) {
         tw3Prices.push(pTw3);
         allPrices.push(pTw3);
@@ -394,25 +427,26 @@ export function processTabel71Upload(
       }
     });
 
-    // Calculate quarter averages
-    const avgTw3 = tw3Prices.length > 0 ? Math.round(tw3Prices.reduce((a, b) => a + b, 0) / tw3Prices.length) : kab.hargaTw3_2026;
-    const avgTw4 = tw4Prices.length > 0 ? Math.round(tw4Prices.reduce((a, b) => a + b, 0) / tw4Prices.length) : kab.hargaTw4_2026;
-    const avgTw1 = tw1Prices.length > 0 ? Math.round(tw1Prices.reduce((a, b) => a + b, 0) / tw1Prices.length) : kab.hargaTw1_2027;
-    const avgTw2 = tw2Prices.length > 0 ? Math.round(tw2Prices.reduce((a, b) => a + b, 0) / tw2Prices.length) : kab.hargaTw2_2027;
+    // Calculate quarter averages strictly from uploaded rows (0 if quarter has no prices yet -> renders '-')
+    const avgTw3 = tw3Prices.length > 0 ? Math.round(tw3Prices.reduce((a, b) => a + b, 0) / tw3Prices.length) : 0;
+    const avgTw4 = tw4Prices.length > 0 ? Math.round(tw4Prices.reduce((a, b) => a + b, 0) / tw4Prices.length) : 0;
+    const avgTw1 = tw1Prices.length > 0 ? Math.round(tw1Prices.reduce((a, b) => a + b, 0) / tw1Prices.length) : 0;
+    const avgTw2 = tw2Prices.length > 0 ? Math.round(tw2Prices.reduce((a, b) => a + b, 0) / tw2Prices.length) : 0;
 
-    // Available quarters average for Harga 2027
+    // Available quarters average for Harga 2027 (0 if all quarters empty -> renders '-')
     const validQuarterAvgs = [avgTw3, avgTw4, avgTw1, avgTw2].filter((v) => v > 0);
     const newHarga2027 = validQuarterAvgs.length > 0
       ? Math.round(validQuarterAvgs.reduce((a, b) => a + b, 0) / validQuarterAvgs.length)
-      : (allPrices.length > 0 ? Math.round(allPrices.reduce((a, b) => a + b, 0) / allPrices.length) : kab.harga2027);
+      : 0;
 
-    // CV calculation
-    const stats = calculateStats(allPrices.length > 0 ? allPrices : [newHarga2027]);
-    const fileCV = parsePrice(kabRows[0]['cv'] ?? kabRows[0]['CV']);
-    const newCV = stats.cv > 0 ? stats.cv : (fileCV > 0 ? fileCV : kab.koefisienVariasi);
+    if (newHarga2027 > 0) {
+      affectedKabCount++;
+    }
 
-    // Dominant brand
-    let dominantBrand = kab.namaKualitas;
+    const stats = allPrices.length > 0 ? calculateStats(allPrices) : { mean: 0, sd: 0, cv: 0 };
+    const newCV = allPrices.length > 0 ? stats.cv : 0;
+
+    let dominantBrand = newHarga2027 > 0 ? kab.namaKualitas : '-';
     let maxCount = 0;
     for (const [b, c] of Object.entries(brandCounts)) {
       if (c > maxCount) {
@@ -423,20 +457,20 @@ export function processTabel71Upload(
 
     const oldHarga2027 = kab.harga2027;
     const oldRasio = kab.rasio;
-    const newRasio = kab.harga2026 > 0 ? parseFloat(((newHarga2027 / kab.harga2026) * 100).toFixed(2)) : 100;
+    const newRasio =
+      newHarga2027 > 0 && kab.harga2026 > 0
+        ? parseFloat(((newHarga2027 / kab.harga2026) * 100).toFixed(2))
+        : 0;
 
-    // Update target
     kab.hargaTw3_2026 = avgTw3;
     kab.hargaTw4_2026 = avgTw4;
     kab.hargaTw1_2027 = avgTw1;
     kab.hargaTw2_2027 = avgTw2;
     kab.harga2027 = newHarga2027;
     kab.koefisienVariasi = newCV;
-    kab.namaKualitas = dominantBrand || kab.namaKualitas;
+    kab.namaKualitas = dominantBrand || '-';
     kab.rasio = newRasio;
-    if (newRespondents.length > 0) {
-      kab.respondents = newRespondents;
-    }
+    kab.respondents = newRespondents;
 
     const diff = newHarga2027 - oldHarga2027;
     const percentDiff = oldHarga2027 > 0 ? parseFloat(((diff / oldHarga2027) * 100).toFixed(2)) : 0;
@@ -457,8 +491,8 @@ export function processTabel71Upload(
       percentDiff,
       oldRasio,
       newRasio,
-      quartersDetail: quartersDetail || 'Semua TW',
-      respondentCount: kabRows.length
+      quartersDetail: quartersDetail || 'Kosong (-)',
+      respondentCount: newRespondents.length
     });
   });
 
@@ -565,19 +599,22 @@ export function processIKKRespondenUpload(
       }
     });
 
-    const avgTw3_25 = tw3_25_prices.length > 0 ? Math.round(tw3_25_prices.reduce((a, b) => a + b, 0) / tw3_25_prices.length) : kab.hargaTw3_2025;
-    const avgTw4_25 = tw4_25_prices.length > 0 ? Math.round(tw4_25_prices.reduce((a, b) => a + b, 0) / tw4_25_prices.length) : kab.hargaTw4_2025;
-    const avgTw1_26 = tw1_26_prices.length > 0 ? Math.round(tw1_26_prices.reduce((a, b) => a + b, 0) / tw1_26_prices.length) : kab.hargaTw1_2026;
-    const avgTw2_26 = tw2_26_prices.length > 0 ? Math.round(tw2_26_prices.reduce((a, b) => a + b, 0) / tw2_26_prices.length) : kab.hargaTw2_2026;
+    const avgTw3_25 = tw3_25_prices.length > 0 ? Math.round(tw3_25_prices.reduce((a, b) => a + b, 0) / tw3_25_prices.length) : 0;
+    const avgTw4_25 = tw4_25_prices.length > 0 ? Math.round(tw4_25_prices.reduce((a, b) => a + b, 0) / tw4_25_prices.length) : 0;
+    const avgTw1_26 = tw1_26_prices.length > 0 ? Math.round(tw1_26_prices.reduce((a, b) => a + b, 0) / tw1_26_prices.length) : 0;
+    const avgTw2_26 = tw2_26_prices.length > 0 ? Math.round(tw2_26_prices.reduce((a, b) => a + b, 0) / tw2_26_prices.length) : 0;
 
     const validLaluQuarters = [avgTw3_25, avgTw4_25, avgTw1_26, avgTw2_26].filter((v) => v > 0);
     const newHarga2026 = validLaluQuarters.length > 0
       ? Math.round(validLaluQuarters.reduce((a, b) => a + b, 0) / validLaluQuarters.length)
-      : (allLaluPrices.length > 0 ? Math.round(allLaluPrices.reduce((a, b) => a + b, 0) / allLaluPrices.length) : kab.harga2026);
+      : (allLaluPrices.length > 0 ? Math.round(allLaluPrices.reduce((a, b) => a + b, 0) / allLaluPrices.length) : 0);
 
     const oldHarga2026 = kab.harga2026;
     const oldRasio = kab.rasio;
-    const newRasio = newHarga2026 > 0 ? parseFloat(((kab.harga2027 / newHarga2026) * 100).toFixed(2)) : 0;
+    const newRasio =
+      newHarga2026 > 0 && kab.harga2027 > 0
+        ? parseFloat(((kab.harga2027 / newHarga2026) * 100).toFixed(2))
+        : 0;
 
     // Update target
     kab.hargaTw3_2025 = avgTw3_25;
@@ -739,10 +776,10 @@ export function processIKKWebentryUpload(
     });
 
     // Quarter averages
-    const avgTw3 = tw3_list.length > 0 ? Math.round(tw3_list.reduce((a, b) => a + b, 0) / tw3_list.length) : kab.hargaTw3_2025;
-    const avgTw4 = tw4_list.length > 0 ? Math.round(tw4_list.reduce((a, b) => a + b, 0) / tw4_list.length) : kab.hargaTw4_2025;
-    const avgTw1 = tw1_list.length > 0 ? Math.round(tw1_list.reduce((a, b) => a + b, 0) / tw1_list.length) : kab.hargaTw1_2026;
-    const avgTw2 = tw2_list.length > 0 ? Math.round(tw2_list.reduce((a, b) => a + b, 0) / tw2_list.length) : kab.hargaTw2_2026;
+    const avgTw3 = tw3_list.length > 0 ? Math.round(tw3_list.reduce((a, b) => a + b, 0) / tw3_list.length) : 0;
+    const avgTw4 = tw4_list.length > 0 ? Math.round(tw4_list.reduce((a, b) => a + b, 0) / tw4_list.length) : 0;
+    const avgTw1 = tw1_list.length > 0 ? Math.round(tw1_list.reduce((a, b) => a + b, 0) / tw1_list.length) : 0;
+    const avgTw2 = tw2_list.length > 0 ? Math.round(tw2_list.reduce((a, b) => a + b, 0) / tw2_list.length) : 0;
 
     const validQuarterAvgs = [avgTw3, avgTw4, avgTw1, avgTw2].filter((p) => p > 0);
     const newHarga2026 = validQuarterAvgs.length > 0
@@ -751,7 +788,10 @@ export function processIKKWebentryUpload(
 
     const oldHarga2026 = kab.harga2026;
     const oldRasio = kab.rasio;
-    const newRasio = newHarga2026 > 0 ? parseFloat(((kab.harga2027 / newHarga2026) * 100).toFixed(2)) : 0;
+    const newRasio =
+      newHarga2026 > 0 && kab.harga2027 > 0
+        ? parseFloat(((kab.harga2027 / newHarga2026) * 100).toFixed(2))
+        : 0;
 
     kab.hargaTw3_2025 = avgTw3;
     kab.hargaTw4_2025 = avgTw4;
@@ -940,5 +980,134 @@ export function processDual2026Merge(
     rawRows: rekonnasRows
   };
 }
+
+/**
+ * Process Multi-Commodity / Full Database Upload across ALL 89 Komoditas/Kualitas in O(N) time.
+ * - Jika file memuat > 1 kode kualitas rekon (atau mode dual_2026_merge), otomatis memproses & memperbarui SELURUH kualitas/komoditas!
+ * - Jika file hanya memuat 1 kode kualitas rekon, hanya memperbarui komoditas tersebut.
+ */
+export function processMultiCommodityUpload(params: {
+  mode: 'tabel71' | 'rekonnas' | 'webentry' | 'dual_2026_merge';
+  rows: any[];
+  webentryRows?: any[];
+  database: Record<string, KabupatenRekon[]>;
+  provinsiKode: string;
+  komoditasList: Komoditas[];
+  selectedKomoditasKode: string;
+  fallbackList: KabupatenRekon[];
+}): MultiParseResult {
+  const {
+    mode,
+    rows,
+    webentryRows = [],
+    database,
+    provinsiKode,
+    komoditasList,
+    selectedKomoditasKode,
+    fallbackList
+  } = params;
+
+  const bucketByCode = new Map<string, any[]>();
+  rows.forEach((r) => {
+    const code = resolveRowQualCode(r);
+    if (!code) return;
+    if (!bucketByCode.has(code)) bucketByCode.set(code, []);
+    bucketByCode.get(code)!.push(r);
+  });
+
+  const webBucketByCode = new Map<string, any[]>();
+  webentryRows.forEach((r) => {
+    const code = resolveRowQualCode(r);
+    if (!code) return;
+    if (!webBucketByCode.has(code)) webBucketByCode.set(code, []);
+    webBucketByCode.get(code)!.push(r);
+  });
+
+  const isMultiCommodity =
+    mode === 'dual_2026_merge' || bucketByCode.size > 1;
+
+  const updatedDatabase: Record<string, KabupatenRekon[]> = {};
+  let updatedCommoditiesCount = 0;
+  let totalAffectedKabEntries = 0;
+  let previewResult: ParseResult | null = null;
+  let previewKomoditasKode = selectedKomoditasKode;
+  let firstNonEmptyResult: { kode: string; res: ParseResult } | null = null;
+
+  const targetList = isMultiCommodity
+    ? komoditasList
+    : (() => {
+        const singleCode = bucketByCode.size === 1 ? Array.from(bucketByCode.keys())[0] : selectedKomoditasKode;
+        const found = komoditasList.find((k) => k.kode === singleCode);
+        return found ? [found] : komoditasList.filter((k) => k.kode === selectedKomoditasKode);
+      })();
+
+  targetList.forEach((kom) => {
+    const key = `${provinsiKode}_${kom.kode}`;
+    const baseList = database[key] || fallbackList;
+    const rowsForKom = bucketByCode.get(kom.kode) || [];
+    const webForKom = webBucketByCode.get(kom.kode) || [];
+
+    let res: ParseResult;
+    if (mode === 'tabel71') {
+      res = processTabel71Upload(rowsForKom, baseList, 'ALL');
+    } else if (mode === 'rekonnas') {
+      res = processIKKRespondenUpload(rowsForKom, baseList, 'ALL');
+    } else if (mode === 'webentry') {
+      res = processIKKWebentryUpload(rowsForKom, baseList, 'ALL');
+    } else {
+      res = processDual2026Merge(rowsForKom, webForKom, baseList, kom.kode);
+    }
+
+    updatedDatabase[key] = res.updatedList;
+
+    if (res.affectedKabCount > 0) {
+      updatedCommoditiesCount++;
+      totalAffectedKabEntries += res.affectedKabCount;
+      if (!firstNonEmptyResult) {
+        firstNonEmptyResult = { kode: kom.kode, res };
+      }
+    }
+
+    if (kom.kode === selectedKomoditasKode) {
+      previewResult = res;
+      previewKomoditasKode = kom.kode;
+    }
+  });
+
+  // If the selected commodity had 0 matches in the uploaded file, preview the first commodity that DID match
+  if ((!previewResult || (previewResult as ParseResult).affectedKabCount === 0) && firstNonEmptyResult) {
+    previewResult = (firstNonEmptyResult as { kode: string; res: ParseResult }).res;
+    previewKomoditasKode = (firstNonEmptyResult as { kode: string; res: ParseResult }).kode;
+  }
+
+  if (!previewResult) {
+    const fallbackBase = database[`${provinsiKode}_${selectedKomoditasKode}`] || fallbackList;
+    previewResult = {
+      updatedList: fallbackBase,
+      comparison: [],
+      totalRows: rows.length + webentryRows.length,
+      affectedKabCount: 0,
+      detectedCommodities: [],
+      rawRows: rows
+    };
+  }
+
+  const combinedCommoditiesCount =
+    mode === 'dual_2026_merge'
+      ? new Set([...bucketByCode.keys(), ...webBucketByCode.keys()]).size
+      : bucketByCode.size;
+
+  return {
+    updatedDatabase,
+    previewResult,
+    previewKomoditasKode,
+    totalRows: rows.length + webentryRows.length,
+    updatedCommoditiesCount,
+    totalCommoditiesInFile: combinedCommoditiesCount,
+    totalAffectedKabEntries,
+    isMultiCommodity
+  };
+}
+
 
 

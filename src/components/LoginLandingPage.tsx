@@ -225,7 +225,7 @@ export const LoginLandingPage: React.FC<LoginLandingPageProps> = ({
                       type="password"
                       value={kabPasswordInput}
                       onChange={(e) => setKabPasswordInput(e.target.value)}
-                      placeholder={`rekonda${selectedKabKode}`}
+                      placeholder="Masukan Kata Sandi"
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 pr-8"
                     />
                     <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />

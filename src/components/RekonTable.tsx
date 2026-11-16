@@ -572,7 +572,7 @@ export const RekonTable: React.FC<RekonTableProps> = ({
                           : undefined
                       }
                     >
-                      <div>{formatRupiahNumber(row.harga2027)}</div>
+                      <div>{row.harga2027 > 0 ? formatRupiahNumber(row.harga2027) : '-'}</div>
                       {sewaSt && (
                         sewaSt.total > 0 ? (
                           sewaSt.allPure ? (
@@ -632,24 +632,28 @@ export const RekonTable: React.FC<RekonTableProps> = ({
 
                     {/* 7. Koefisien Variasi */}
                     <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono tabular-nums`}>
-                      <span
-                        className={`font-semibold ${
-                          isHighCV
-                            ? 'text-amber-800 bg-amber-100 px-1 py-0.5 rounded text-[10px]'
-                            : row.koefisienVariasi === 0
-                            ? 'text-slate-400'
-                            : 'text-slate-800'
-                        }`}
-                        title={`Variasi harga antar responden: ${formatPercent(row.koefisienVariasi)}%`}
-                      >
-                        {formatPercent(row.koefisienVariasi)}%
-                      </span>
+                      {row.harga2027 > 0 ? (
+                        <span
+                          className={`font-semibold ${
+                            isHighCV
+                              ? 'text-amber-800 bg-amber-100 px-1 py-0.5 rounded text-[10px]'
+                              : row.koefisienVariasi === 0
+                              ? 'text-slate-400'
+                              : 'text-slate-800'
+                          }`}
+                          title={`Variasi harga antar responden: ${formatPercent(row.koefisienVariasi)}%`}
+                        >
+                          {formatPercent(row.koefisienVariasi)}%
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 font-mono">-</span>
+                      )}
                     </td>
 
                     {/* 8. Nama Kualitas / Merek Dominan */}
-                    <td className={`${rowPaddingY} ${rowPaddingX} text-slate-700 truncate`} title={`Merek paling banyak muncul: ${row.namaKualitas}`}>
-                      <span className="truncate block font-medium text-slate-800">
-                        {row.namaKualitas || 'Standar'}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-slate-700 truncate`} title={`Merek paling banyak muncul: ${row.harga2027 > 0 ? row.namaKualitas : '-'}`}>
+                      <span className={`truncate block font-medium ${row.harga2027 > 0 && row.namaKualitas && row.namaKualitas !== '-' ? 'text-slate-800' : 'text-slate-400'}`}>
+                        {row.harga2027 > 0 && row.namaKualitas && row.namaKualitas !== '-' ? row.namaKualitas : '-'}
                       </span>
                     </td>
 
@@ -660,7 +664,7 @@ export const RekonTable: React.FC<RekonTableProps> = ({
 
                     {/* 10. Rasio */}
                     <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono tabular-nums`}>
-                      {row.harga2026 > 0 ? (
+                      {row.harga2027 > 0 && row.harga2026 > 0 ? (
                         <span
                           className={`font-bold ${
                             row.rasio > 120
@@ -673,7 +677,7 @@ export const RekonTable: React.FC<RekonTableProps> = ({
                           {formatPercent(row.rasio)}%
                         </span>
                       ) : (
-                        <span className="text-slate-400 font-mono" title="Data 2026 tidak dicacah">-</span>
+                        <span className="text-slate-400 font-mono" title="Data tidak tersedia">-</span>
                       )}
                     </td>
 

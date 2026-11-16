@@ -81,7 +81,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="mt-3 pt-3 border-t border-slate-200 text-[11px] text-slate-600">
                 {currentUser.role === 'pemilik' || currentUser.isOwner ? (
                   <p className="text-emerald-700 font-medium">
-                    ✓ <strong>Hak Akses Admin Provinsi:</strong> Upload berkas Excel (Tabel 7.1 &amp; IKK Rekonda 2026), monitoring status rekonsiliasi seluruh 14 kabupaten/kota se-Kalbar, dan verifikasi status.
+                    ✓ <strong>Hak Akses Admin Provinsi:</strong> Upload berkas Excel (Template Harga Tahun Berjalan &amp; IKK Rekonda 2026), monitoring status rekonsiliasi seluruh 14 kabupaten/kota se-Kalbar, dan verifikasi status.
                   </p>
                 ) : (
                   <p className="text-sky-800 font-medium">

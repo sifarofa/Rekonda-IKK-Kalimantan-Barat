@@ -10,10 +10,9 @@ import {
   FileText,
   Lock,
   Layers,
-  FileUp,
-  ClipboardPaste,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Info
 } from 'lucide-react';
 import { KabupatenRekon, Komoditas, UserAuth } from '../types/rekonda';
 import { formatRupiahNumber, formatPercent } from '../utils/formatters';
@@ -24,12 +23,9 @@ import {
 } from '../utils/templateGenerators';
 import {
   parseFileToRows,
-  processTabel71Upload,
-  processIKKRespondenUpload,
-  processIKKWebentryUpload,
   detectTemplateType,
-  processDual2026Merge,
-  ParseResult
+  processMultiCommodityUpload,
+  MultiParseResult
 } from '../utils/templateParsers';
 import { uploadDocumentToSupabase } from '../services/supabaseDocuments';
 
@@ -39,7 +35,14 @@ interface UploadModalProps {
   currentUser: UserAuth;
   onOpenAuth: () => void;
   currentData: KabupatenRekon[];
-  onApplyData: (updatedList: KabupatenRekon[], sheetType: 'rekonda26' | 'tabel71') => void;
+  database: Record<string, KabupatenRekon[]>;
+  komoditasList: Komoditas[];
+  provinsiKode: string;
+  onApplyData: (
+    updatedDatabase: Record<string, KabupatenRekon[]>,
+    sheetType: 'rekonda26' | 'tabel71',
+    summary?: { updatedCommoditiesCount: number; isMultiCommodity: boolean }
+  ) => void;
   selectedKomoditas: Komoditas;
   onQuickLoginAsOwner?: () => void;
 }
@@ -50,78 +53,96 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   currentUser,
   onOpenAuth,
   currentData,
+  database,
+  komoditasList,
+  provinsiKode,
   onApplyData,
   selectedKomoditas,
   onQuickLoginAsOwner
 }) => {
-  // Tab: 'tabel71' (Tahun Berjalan -> Harga 2027) | 'rekonda26' (Tahun Sebelumnya -> Harga 2026)
+  // Tab: 'tabel71' (Harga Tahun Berjalan -> Harga 2027) | 'rekonda26' (Harga Tahun Sebelumnya -> Harga 2026)
   const [activeTab, setActiveTab] = useState<'tabel71' | 'rekonda26'>('tabel71');
 
   // Sub-source for 2026: 'auto_merge' | 'rekonnas' | 'webentry'
   const [source2026, setSource2026] = useState<'auto_merge' | 'rekonnas' | 'webentry'>('auto_merge');
 
-  // Input method: 'upload' | 'paste'
-  const [inputMethod, setInputMethod] = useState<'upload' | 'paste'>('upload');
-  const [pastedText, setPastedText] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [parseError, setParseError] = useState<string>('');
   const [successInfo, setSuccessInfo] = useState<string>('');
-  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
-  const [selectedCommodityFilter, setSelectedCommodityFilter] = useState<string>('ALL');
+  const [multiResult, setMultiResult] = useState<MultiParseResult | null>(null);
 
   if (!isOpen) return null;
 
-  // Process rows with selected tab and sub-type
+  const parseResult = multiResult?.previewResult || null;
+  const previewKomObj =
+    komoditasList.find((k) => k.kode === multiResult?.previewKomoditasKode) || selectedKomoditas;
+
+  // Process uploaded rows across ALL commodities/qualities present in the file
   const runParser = (
     rows: any[],
     tab: 'tabel71' | 'rekonda26',
-    subSource: 'auto_merge' | 'rekonnas' | 'webentry' = source2026,
-    filterComm: string = selectedCommodityFilter
+    subSource: 'auto_merge' | 'rekonnas' | 'webentry' = source2026
   ) => {
     try {
-      // Auto-scope to selectedKomoditas if user uploaded a full multi-commodity CSV and filterComm is 'ALL'
-      const distinctCodes = new Set(
-        rows
-          .map((r) => String(r['kode kualitas rekon'] || r['Kualitas Data'] || r['Kualitas Rekon'] || '').trim())
-          .filter(Boolean)
-      );
-      const effectiveFilter = (filterComm === 'ALL' && distinctCodes.size > 1)
-        ? selectedKomoditas.kode
-        : filterComm;
-
-      if (tab === 'tabel71') {
-        const result = processTabel71Upload(rows, currentData, effectiveFilter);
-        setParseResult(result);
-        if (result.affectedKabCount === 0) {
-          setParseError('Tidak ditemukan data kabupaten/kota yang cocok untuk kualitas ini. Pastikan berkas memuat kolom Kode Kabupaten (6101-6172) dan kode kualitas rekon.');
-        } else {
-          setSuccessInfo(`Berhasil memproses ${result.totalRows.toLocaleString('id-ID')} baris data ([${selectedKomoditas.kode}]). Menemukan ${result.affectedKabCount} kabupaten/kota untuk diperbarui ke kolom Harga 2027.`);
-          setParseError('');
-        }
-      } else {
-        // Tab rekonda26 (Tahun sebelumnya / Harga 2026)
+      let mode: 'tabel71' | 'rekonnas' | 'webentry' = 'tabel71';
+      if (tab === 'rekonda26') {
         const detected = detectTemplateType(rows);
-
-        let result: ParseResult;
         if (subSource === 'webentry' || (subSource === 'auto_merge' && detected === 'rekonda_webentry')) {
-          result = processIKKWebentryUpload(rows, currentData, effectiveFilter);
+          mode = 'webentry';
         } else {
-          result = processIKKRespondenUpload(rows, currentData, effectiveFilter);
-        }
-
-        setParseResult(result);
-        if (result.affectedKabCount === 0) {
-          setParseError('Tidak ditemukan wilayah/kualitas yang cocok dalam berkas. Pastikan kolom memuat nama atau kode kabupaten dan kode kualitas.');
-        } else {
-          setSuccessInfo(`Berhasil memproses data tahun sebelumnya (${result.affectedKabCount} kabupaten/kota) untuk [${selectedKomoditas.kode}]. Diperbarui ke kolom Harga 2026.`);
-          setParseError('');
+          mode = 'rekonnas';
         }
       }
+
+      const result = processMultiCommodityUpload({
+        mode,
+        rows,
+        database,
+        provinsiKode,
+        komoditasList,
+        selectedKomoditasKode: selectedKomoditas.kode,
+        fallbackList: currentData
+      });
+
+      setMultiResult(result);
+
+      if (result.totalAffectedKabEntries === 0) {
+        setParseError(
+          'Tidak ditemukan data kabupaten/kota yang cocok dengan kode kualitas pada berkas. Pastikan berkas memuat kolom Kode Kabupaten (6101–6172) dan kode kualitas rekon.'
+        );
+        return;
+      }
+
+      const previewKom =
+        komoditasList.find((k) => k.kode === result.previewKomoditasKode) || selectedKomoditas;
+
+      if (tab === 'tabel71') {
+        if (result.isMultiCommodity) {
+          setSuccessInfo(
+            `Berhasil memproses ${result.totalRows.toLocaleString('id-ID')} baris data untuk SELURUH ${result.updatedCommoditiesCount} komoditas/kualitas (${result.totalAffectedKabEntries} data kab/kota terisi) ke kolom Harga Tahun Berjalan (2027). Pratinjau di bawah menampilkan [${previewKom.kode}] ${previewKom.nama}; seluruh ${result.updatedCommoditiesCount} komoditas akan otomatis diperbarui saat Anda klik Terapkan.`
+          );
+        } else {
+          setSuccessInfo(
+            `Berhasil memproses ${result.totalRows.toLocaleString('id-ID')} baris data ([${previewKom.kode}] ${previewKom.nama}). Menemukan ${result.previewResult.affectedKabCount} kabupaten/kota untuk diperbarui ke kolom Harga 2027.`
+          );
+        }
+      } else {
+        if (result.isMultiCommodity) {
+          setSuccessInfo(
+            `Berhasil memproses ${result.totalRows.toLocaleString('id-ID')} baris data tahun sebelumnya untuk SELURUH ${result.updatedCommoditiesCount} komoditas/kualitas (${result.totalAffectedKabEntries} data kab/kota) ke kolom Harga 2026. Pratinjau di bawah menampilkan [${previewKom.kode}] ${previewKom.nama}; seluruh ${result.updatedCommoditiesCount} komoditas akan otomatis diperbarui saat Anda klik Terapkan.`
+          );
+        } else {
+          setSuccessInfo(
+            `Berhasil memproses data tahun sebelumnya (${result.previewResult.affectedKabCount} kabupaten/kota) untuk [${previewKom.kode}] ${previewKom.nama} ke kolom Harga 2026.`
+          );
+        }
+      }
+      setParseError('');
     } catch (err: any) {
       setParseError(`Gagal memproses berkas: ${err.message || 'Format tidak sesuai'}`);
-      setParseResult(null);
+      setMultiResult(null);
     }
   };
 
@@ -140,50 +161,21 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const rows = await parseFileToRows(pickedFile);
       if (!rows || rows.length === 0) {
         setParseError('Berkas Excel / CSV kosong.');
-        setParseResult(null);
+        setMultiResult(null);
         setIsProcessing(false);
         return;
       }
 
-      runParser(rows, activeTab, source2026, selectedCommodityFilter);
+      runParser(rows, activeTab, source2026);
     } catch (err: any) {
       setParseError(`Gagal membaca berkas: ${err.message || 'Format berkas tidak didukung'}`);
-      setParseResult(null);
+      setMultiResult(null);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Handle Pasted Text processing
-  const handleProcessPastedText = async () => {
-    if (!pastedText || pastedText.trim().length === 0) {
-      setParseError('Silakan tempel teks tabel terlebih dahulu.');
-      return;
-    }
-
-    setIsProcessing(true);
-    setParseError('');
-    setSuccessInfo('');
-    setFileName('Teks Tempel (Clipboard)');
-
-    try {
-      const rows = await parseFileToRows(pastedText.trim());
-      if (!rows || rows.length === 0) {
-        setParseError('Teks yang ditempel tidak dapat dikenali sebagai tabel baris & kolom.');
-        setParseResult(null);
-        setIsProcessing(false);
-        return;
-      }
-      runParser(rows, activeTab, source2026, selectedCommodityFilter);
-    } catch (err: any) {
-      setParseError(`Gagal membaca teks: ${err.message}`);
-      setParseResult(null);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Load Built-in Template Sample
+  // Load Built-in Official Files across ALL commodities
   const handleLoadSample = async (type: 'tabel71' | 'rekonnas' | 'webentry' | 'auto_merge') => {
     setIsProcessing(true);
     setSelectedFile(null);
@@ -193,32 +185,32 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     try {
       if (type === 'tabel71') {
         setActiveTab('tabel71');
-        setFileName(`database_tabel_7.1.csv ([${selectedKomoditas.kode}] Tahun Berjalan 2026/2027)`);
+        setFileName('Data_Harga_Tahun_Berjalan.csv (Seluruh Komoditas 2026/2027)');
         const res = await fetch('/assets/aistudio/database_tabel_7.1_0a44d253.csv');
         const text = await res.text();
         const rows = await parseFileToRows(text);
-        runParser(rows, 'tabel71', 'rekonnas', selectedKomoditas.kode);
+        runParser(rows, 'tabel71', 'rekonnas');
       } else if (type === 'rekonnas') {
         setActiveTab('rekonda26');
         setSource2026('rekonnas');
-        setFileName(`IKK_REKONDA_responden_2026.csv ([${selectedKomoditas.kode}] Rekonnas Final)`);
+        setFileName('IKK_REKONDA_responden_2026.csv (Seluruh Komoditas Rekonnas)');
         const res = await fetch('/assets/aistudio/IKK_REKONDA_responden_2026_3d99b638.csv');
         const text = await res.text();
         const rows = await parseFileToRows(text);
-        runParser(rows, 'rekonda26', 'rekonnas', selectedKomoditas.kode);
+        runParser(rows, 'rekonda26', 'rekonnas');
       } else if (type === 'webentry') {
         setActiveTab('rekonda26');
         setSource2026('webentry');
-        setFileName(`database_webentry_2026.csv ([${selectedKomoditas.kode}] Webentry Lengkap)`);
+        setFileName('database_webentry_2026.csv (Seluruh Komoditas Webentry)');
         const res = await fetch('/assets/aistudio/database_webentry_2026_f5274433.csv');
         const text = await res.text();
         const rows = await parseFileToRows(text);
-        runParser(rows, 'rekonda26', 'webentry', selectedKomoditas.kode);
+        runParser(rows, 'rekonda26', 'webentry');
       } else if (type === 'auto_merge') {
-        // Dual Merge Rule: IKK Rekonda Responden where present, Database Webentry fallback
+        // Dual Merge Rule across ALL 89 commodities: IKK Rekonda Responden primary, Database Webentry fallback
         setActiveTab('rekonda26');
         setSource2026('auto_merge');
-        setFileName(`Sinkronisasi Gabungan ([${selectedKomoditas.kode}]): IKK Responden + Fallback Webentry`);
+        setFileName('Sinkron Gabungan (Seluruh Komoditas): IKK Responden + Webentry');
         const [resRekon, resWeb] = await Promise.all([
           fetch('/assets/aistudio/IKK_REKONDA_responden_2026_3d99b638.csv'),
           fetch('/assets/aistudio/database_webentry_2026_f5274433.csv')
@@ -228,31 +220,41 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         const rowsRekon = await parseFileToRows(textRekon);
         const rowsWeb = await parseFileToRows(textWeb);
 
-        const mergedResult = processDual2026Merge(
-          rowsRekon,
-          rowsWeb,
-          currentData,
-          selectedKomoditas.kode
+        const mergedResult = processMultiCommodityUpload({
+          mode: 'dual_2026_merge',
+          rows: rowsRekon,
+          webentryRows: rowsWeb,
+          database,
+          provinsiKode,
+          komoditasList,
+          selectedKomoditasKode: selectedKomoditas.kode,
+          fallbackList: currentData
+        });
+
+        setMultiResult(mergedResult);
+        const previewKom =
+          komoditasList.find((k) => k.kode === mergedResult.previewKomoditasKode) || selectedKomoditas;
+
+        setSuccessInfo(
+          `Langkah 1 Selesai — Sinkron Gabungan berhasil menggabungkan ${mergedResult.updatedCommoditiesCount} komoditas/kualitas (mengutamakan IKK Rekonda Responden, dan otomatis mengambil dari Database Webentry jika kode/kabupaten belum tersedia). Pratinjau di bawah menampilkan [${previewKom.kode}] ${previewKom.nama}. Langkah 2: Klik tombol "Terapkan ke Kolom Harga 2026" di bawah untuk menyimpan ke tabel.`
         );
-        setParseResult(mergedResult);
-        setSuccessInfo(`Sinkronisasi Ganda Berhasil untuk [${selectedKomoditas.kode}]: Menggunakan IKK Rekonda Responden untuk data yang tersedia dan Database Webentry sebagai fallback.`);
       }
     } catch (err: any) {
       setParseError(`Gagal memuat data: ${err.message}`);
-      setParseResult(null);
+      setMultiResult(null);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Submit, Upload to Supabase Storage & app_documents, and Apply
+  // Submit, Upload to Supabase Storage & app_documents, and Apply across ALL updated commodities
   const handleProcessUpload = async () => {
     if (!currentUser.isOwner && !onQuickLoginAsOwner) {
       setParseError('Akses ditolak: Hanya Admin Provinsi yang dapat memperbarui data master.');
       return;
     }
-    if (!parseResult || parseResult.updatedList.length === 0) {
-      setParseError('Silakan pilih berkas atau data yang valid terlebih dahulu.');
+    if (!multiResult || Object.keys(multiResult.updatedDatabase).length === 0) {
+      setParseError('Silakan pilih berkas atau sinkronisasi data yang valid terlebih dahulu.');
       return;
     }
 
@@ -263,15 +265,22 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           file: selectedFile,
           title:
             activeTab === 'tabel71'
-              ? `Tabel 7.1 [${selectedKomoditas.kode}] ${selectedKomoditas.nama}`
-              : `Rekonda 2026 [${selectedKomoditas.kode}] ${selectedKomoditas.nama}`,
+              ? multiResult.isMultiCommodity
+                ? `Harga Tahun Berjalan (Seluruh ${multiResult.updatedCommoditiesCount} Komoditas)`
+                : `Harga Tahun Berjalan [${previewKomObj.kode}] ${previewKomObj.nama}`
+              : multiResult.isMultiCommodity
+              ? `Rekonda 2026 (Seluruh ${multiResult.updatedCommoditiesCount} Komoditas)`
+              : `Rekonda 2026 [${previewKomObj.kode}] ${previewKomObj.nama}`,
           metadata: {
-            kategori: activeTab === 'tabel71' ? 'Data Tabel 7.1' : 'Data Rekonda 2026',
+            kategori: activeTab === 'tabel71' ? 'Data Harga Tahun Berjalan' : 'Data Rekonda 2026',
             sheet_type: activeTab,
             source_2026: activeTab === 'rekonda26' ? source2026 : undefined,
-            komoditas_kode: selectedKomoditas.kode,
-            komoditas_nama: selectedKomoditas.nama,
-            affected_kab_count: parseResult.affectedKabCount,
+            komoditas_kode: multiResult.isMultiCommodity ? 'ALL' : previewKomObj.kode,
+            komoditas_nama: multiResult.isMultiCommodity
+              ? `Semua Komoditas (${multiResult.updatedCommoditiesCount} kualitas)`
+              : previewKomObj.nama,
+            updated_commodities_count: multiResult.updatedCommoditiesCount,
+            affected_kab_count: multiResult.totalAffectedKabEntries,
             uploaded_by: currentUser.email || currentUser.name || 'Admin Provinsi'
           }
         });
@@ -284,7 +293,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       }
     }
 
-    onApplyData(parseResult.updatedList, activeTab);
+    onApplyData(multiResult.updatedDatabase, activeTab, {
+      updatedCommoditiesCount: multiResult.updatedCommoditiesCount,
+      isMultiCommodity: multiResult.isMultiCommodity
+    });
     setSelectedFile(null);
     onClose();
   };
@@ -301,14 +313,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h4 className="text-sm sm:text-base font-bold text-white">
-                  Upload & Template Rekonda Lintas Tahun
+                  Upload &amp; Template Rekonda Lintas Tahun
                 </h4>
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded border border-emerald-500/30">
                   IKK 2026/2027
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Sinkronisasi data tahun berjalan (Harga 2027) dan tahun sebelumnya (Harga 2026)
+                Sinkronisasi data tahun berjalan (Harga 2027) dan tahun sebelumnya (Harga 2026) untuk seluruh komoditas
               </p>
             </div>
           </div>
@@ -352,13 +364,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
           {/* Main 2-Tab Navigation */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200">
-            {/* Tab 1: Database Tabel 7.1 (Tahun Berjalan -> Harga 2027) */}
+            {/* Tab 1: Template Harga Tahun Berjalan (Harga 2027) */}
             <button
               type="button"
               onClick={() => {
                 setActiveTab('tabel71');
                 setFileName('');
-                setParseResult(null);
+                setSelectedFile(null);
+                setMultiResult(null);
                 setParseError('');
                 setSuccessInfo('');
               }}
@@ -371,14 +384,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <div className="flex items-center justify-between mb-1">
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-800">
                   <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                  1. Template Database Tabel 7.1
+                  1. Template Harga Tahun Berjalan
                 </span>
                 <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
                   Harga 2027
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Data <strong>Tahun Berjalan</strong> (TW III & IV 2026, TW I & II 2027 dimasukkan ke kolom <strong>Harga 2027</strong>).
+                Data <strong>Tahun Berjalan</strong> (TW III &amp; IV 2026, TW I &amp; II 2027) dimasukkan otomatis ke kolom <strong>Harga 2027</strong> untuk seluruh komoditas.
               </p>
             </button>
 
@@ -388,7 +401,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               onClick={() => {
                 setActiveTab('rekonda26');
                 setFileName('');
-                setParseResult(null);
+                setSelectedFile(null);
+                setMultiResult(null);
                 setParseError('');
                 setSuccessInfo('');
               }}
@@ -408,14 +422,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500">
-                Data <strong>Tahun Sebelumnya</strong> (Rekonnas Responden & Webentry dimasukkan ke kolom <strong>Harga 2026</strong>).
+                Data <strong>Tahun Sebelumnya</strong> (Rekonnas Responden &amp; Webentry) dimasukkan ke kolom <strong>Harga 2026</strong> untuk seluruh komoditas.
               </p>
             </button>
           </div>
 
           {/* Sub-selector for 2026 Sources */}
           {activeTab === 'rekonda26' && (
-            <div className="p-3 bg-sky-50/70 border border-sky-200 rounded-xl space-y-2">
+            <div className="p-3 bg-sky-50/70 border border-sky-200 rounded-xl space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   <Layers className="w-4 h-4 text-sky-600" />
@@ -444,7 +458,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     <span>Otomatis Gabung</span>
                   </div>
                   <p className="text-[11px] text-slate-500 font-normal">
-                    Rekonnas untuk kode ada, Webentry untuk kode belum ada
+                    Rekonnas sebagai prioritas utama, Webentry sebagai pelengkap
                   </p>
                 </button>
 
@@ -484,6 +498,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   </p>
                 </button>
               </div>
+
+              {/* Cara Kerja Sinkron Gabungan */}
+              <div className="p-2.5 rounded-lg bg-white/90 border border-sky-200 text-[11px] text-slate-700 flex items-start gap-2">
+                <Info className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-slate-900">Cara Kerja Sinkron Gabungan (2 Langkah):</span>{' '}
+                  <strong>(1)</strong> Klik tombol <strong>Sinkron Gabungan (Rekonnas + Webentry)</strong> di bawah untuk menggabungkan kedua data resmi seluruh 89 komoditas ke dalam pratinjau.{' '}
+                  <strong>(2)</strong> Setelah pratinjau muncul, klik <strong>Terapkan ke Kolom Harga 2026</strong> di pojok kanan bawah untuk menyimpan hasil gabungan ke seluruh tabel Rekon Daerah &amp; Anomali.
+                </div>
+              </div>
             </div>
           )}
 
@@ -493,13 +517,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-900">
                   {activeTab === 'tabel71'
-                    ? 'Template Database Tabel 7.1'
+                    ? 'Template Harga Tahun Berjalan'
                     : source2026 === 'webentry'
                     ? 'Template Database IKK 2026 Webentry'
                     : 'Template IKK Rekonda Responden 2026'}
                 </span>
                 <span className="text-[11px] text-slate-600 font-medium">
-                  (Komoditas: {selectedKomoditas.nama})
+                  (Contoh: {selectedKomoditas.nama})
                 </span>
               </div>
             </div>
@@ -544,7 +568,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Quick Load Official Files Strip */}
           <div className="p-3 rounded-xl bg-slate-100 border border-slate-200 flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-bold text-slate-700">
-              Data Resmi Tersedia di Sistem:
+              Data Resmi Tersedia di Sistem (Seluruh Komoditas):
             </span>
             <div className="flex flex-wrap items-center gap-2">
               {activeTab === 'tabel71' ? (
@@ -555,7 +579,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-md shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isProcessing ? 'animate-spin' : ''}`} />
-                  <span>Muat Database Tabel 7.1 (Tahun Berjalan)</span>
+                  <span>Muat Data Harga Tahun Berjalan</span>
                 </button>
               ) : (
                 <>
@@ -591,84 +615,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           </div>
 
-          {/* Input Method Switcher */}
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-2 text-xs">
-            <button
-              type="button"
-              onClick={() => setInputMethod('upload')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                inputMethod === 'upload'
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-              }`}
+          {/* Direct File Upload Dropzone (Tempel Teks removed) */}
+          <div className="border-2 border-dashed border-slate-300 hover:border-emerald-400 rounded-xl p-5 text-center bg-slate-50/50 transition-colors">
+            <input
+              id="file-upload-input"
+              type="file"
+              accept=".xlsx,.xls,.csv,.tsv,.txt"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            <label
+              htmlFor="file-upload-input"
+              className="cursor-pointer flex flex-col items-center justify-center space-y-2"
             >
-              <FileUp className="w-3.5 h-3.5" />
-              <span>Upload Berkas (.xlsx, .csv)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setInputMethod('paste')}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                inputMethod === 'paste'
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'bg-slate-100 text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <ClipboardPaste className="w-3.5 h-3.5" />
-              <span>Tempel Teks (Paste dari Excel)</span>
-            </button>
-          </div>
-
-          {/* Mode 1: File Upload */}
-          {inputMethod === 'upload' ? (
-            <div className="border-2 border-dashed border-slate-300 hover:border-slate-400 rounded-xl p-5 text-center bg-slate-50/50 transition-colors">
-              <input
-                id="file-upload-input"
-                type="file"
-                accept=".xlsx,.xls,.csv,.tsv,.txt"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <label
-                htmlFor="file-upload-input"
-                className="cursor-pointer flex flex-col items-center justify-center space-y-2"
-              >
-                <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-200">
-                  <Upload className="w-5 h-5" />
-                </div>
-                <div className="text-xs font-bold text-slate-800">
-                  {fileName ? (
-                    <span className="text-emerald-700">{fileName}</span>
-                  ) : (
-                    <span>Pilih berkas Excel (.xlsx, .xls) atau CSV (.csv) dari perangkat Anda</span>
-                  )}
-                </div>
-              </label>
-            </div>
-          ) : (
-            /* Mode 2: Direct Paste */
-            <div className="space-y-2">
-              <textarea
-                rows={4}
-                value={pastedText}
-                onChange={(e) => setPastedText(e.target.value)}
-                placeholder="Salin baris tabel dari Excel lalu tempel (Ctrl+V) di sini..."
-                className="w-full font-mono text-xs p-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 bg-slate-50 text-slate-800"
-              />
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  disabled={!pastedText.trim() || isProcessing}
-                  onClick={handleProcessPastedText}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 rounded-md shadow-2xs transition-colors cursor-pointer disabled:opacity-40"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
-                  <span>Proses Teks Ditempel</span>
-                </button>
+              <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-200">
+                <Upload className="w-5 h-5" />
               </div>
-            </div>
-          )}
+              <div className="text-xs font-bold text-slate-800">
+                {fileName ? (
+                  <span className="text-emerald-700">{fileName}</span>
+                ) : (
+                  <span>Pilih berkas Excel (.xlsx, .xls) atau CSV (.csv) dari perangkat Anda</span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Mendukung unggah sekaligus seluruh 89 komoditas/kualitas maupun satu komoditas tertentu
+              </p>
+            </label>
+          </div>
 
           {/* Feedback Notices */}
           {parseError && (
@@ -682,25 +656,33 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           )}
 
           {successInfo && (
-            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
               <span>{successInfo}</span>
             </div>
           )}
 
-          {/* SINGLE Preview Comparison Table (No duplicate table!) */}
+          {/* SINGLE Preview Comparison Table */}
           {parseResult && parseResult.comparison.length > 0 && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h5 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
                   <span>
-                    Pratinjau Hasil Perubahan: Kolom {activeTab === 'tabel71' ? 'Harga 2027 (Tahun Berjalan)' : 'Harga 2026 (Tahun Lalu)'}
+                    Pratinjau [{previewKomObj.kode}] {previewKomObj.nama}: Kolom{' '}
+                    {activeTab === 'tabel71' ? 'Harga 2027 (Tahun Berjalan)' : 'Harga 2026 (Tahun Lalu)'}
                   </span>
                 </h5>
-                <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
-                  {parseResult.affectedKabCount} Kabupaten/Kota Terdampak
-                </span>
+                <div className="flex items-center gap-1.5">
+                  {multiResult?.isMultiCommodity && (
+                    <span className="text-xs bg-sky-100 text-sky-800 font-bold px-2 py-0.5 rounded">
+                      Seluruh {multiResult.updatedCommoditiesCount} Komoditas Siap Diterapkan
+                    </span>
+                  )}
+                  <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
+                    {parseResult.affectedKabCount} Kab/Kota Terisi
+                  </span>
+                </div>
               </div>
 
               <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-lg text-xs">
@@ -726,30 +708,37 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         <td className="p-2 font-bold text-slate-600">{item.kode}</td>
                         <td className="p-2 font-sans font-semibold text-slate-900">{item.nama}</td>
                         <td className="p-2 text-right text-slate-500">
-                          Rp {formatRupiahNumber(item.oldValue)}
+                          {item.oldValue > 0 ? `Rp ${formatRupiahNumber(item.oldValue)}` : '-'}
                         </td>
                         <td className="p-2 text-right font-bold text-emerald-700 bg-emerald-50/50">
-                          Rp {formatRupiahNumber(item.newValue)}
+                          {item.newValue > 0 ? `Rp ${formatRupiahNumber(item.newValue)}` : '-'}
                         </td>
                         <td className="p-2 text-right">
-                          <span
-                            className={
-                              item.diff > 0
-                                ? 'text-rose-600 font-bold'
-                                : item.diff < 0
-                                ? 'text-sky-600 font-bold'
-                                : 'text-slate-400'
-                            }
-                          >
-                            {item.diff > 0 ? '+' : ''}
-                            {formatRupiahNumber(item.diff)} ({item.percentDiff > 0 ? '+' : ''}
-                            {formatPercent(item.percentDiff)}%)
-                          </span>
+                          {item.newValue > 0 || item.oldValue > 0 ? (
+                            <span
+                              className={
+                                item.diff > 0
+                                  ? 'text-rose-600 font-bold'
+                                  : item.diff < 0
+                                  ? 'text-sky-600 font-bold'
+                                  : 'text-slate-400'
+                              }
+                            >
+                              {item.diff > 0 ? '+' : ''}
+                              {formatRupiahNumber(item.diff)} ({item.percentDiff > 0 ? '+' : ''}
+                              {formatPercent(item.percentDiff)}%)
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
                         </td>
                         <td className="p-2 text-right font-bold text-slate-800">
-                          {formatPercent(item.newRasio)}%
+                          {item.newRasio > 0 ? `${formatPercent(item.newRasio)}%` : '-'}
                         </td>
-                        <td className="p-2 font-sans text-[10px] text-slate-500 truncate max-w-[220px]" title={item.quartersDetail}>
+                        <td
+                          className="p-2 font-sans text-[10px] text-slate-500 truncate max-w-[220px]"
+                          title={item.quartersDetail}
+                        >
                           {item.quartersDetail}
                         </td>
                       </tr>
@@ -764,7 +753,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         {/* Footer */}
         <div className="p-4 sm:px-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <div className="text-xs text-slate-500">
-            Target Kolom: <strong>{activeTab === 'tabel71' ? 'Harga 2027 (Tahun Berjalan)' : 'Harga 2026 (Basis IKK)'}</strong>
+            Target Kolom:{' '}
+            <strong>
+              {activeTab === 'tabel71' ? 'Harga 2027 (Tahun Berjalan)' : 'Harga 2026 (Basis IKK)'}
+            </strong>
+            {multiResult?.isMultiCommodity && (
+              <span className="ml-1.5 text-emerald-700 font-semibold">
+                · {multiResult.updatedCommoditiesCount} komoditas akan diperbarui
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
@@ -777,7 +774,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </button>
             <button
               type="button"
-              disabled={!parseResult || parseResult.affectedKabCount === 0 || isProcessing}
+              disabled={!multiResult || multiResult.totalAffectedKabEntries === 0 || isProcessing}
               onClick={handleProcessUpload}
               className="inline-flex items-center gap-2 px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 rounded-lg shadow-sm disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
             >

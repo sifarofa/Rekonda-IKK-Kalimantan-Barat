@@ -124,8 +124,8 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
       const kabList = database[dbKey] || [];
 
       kabList.forEach((kab) => {
-        const isCV = kab.koefisienVariasi > 20;
-        const isRasio = kab.harga2026 > 0 && (kab.rasio > 120 || kab.rasio < 80);
+        const isCV = kab.harga2027 > 0 && kab.koefisienVariasi > 20;
+        const isRasio = kab.harga2027 > 0 && kab.harga2026 > 0 && (kab.rasio > 120 || kab.rasio < 80);
         const hasExplicitStatus = kab.statusRekon === 'rekon_selesai';
 
         if (isCV || isRasio || hasExplicitStatus) {
@@ -858,8 +858,8 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                   };
 
                   const isSaved = savedRowId === item.id;
-                  const isHighCV = item.kabupaten.koefisienVariasi > 20;
-                  const isExtremeRasio = item.kabupaten.harga2026 > 0 && (item.kabupaten.rasio > 120 || item.kabupaten.rasio < 80);
+                  const isHighCV = item.kabupaten.harga2027 > 0 && item.kabupaten.koefisienVariasi > 20;
+                  const isExtremeRasio = item.kabupaten.harga2027 > 0 && item.kabupaten.harga2026 > 0 && (item.kabupaten.rasio > 120 || item.kabupaten.rasio < 80);
                   const userCanEdit = canEditRow(item.kabupaten.kode);
                   const isSewaAlatItem = isSewaAlatKomoditas(item.komoditas.kode);
                   const sewaSt = isSewaAlatItem ? getSewaAlatKabStatus(item.kabupaten) : null;
@@ -959,7 +959,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                             : undefined
                         }
                       >
-                        <div>{formatRupiahNumber(item.kabupaten.harga2027)}</div>
+                        <div>{item.kabupaten.harga2027 > 0 ? formatRupiahNumber(item.kabupaten.harga2027) : '-'}</div>
                         {sewaSt && (
                           sewaSt.total > 0 ? (
                             sewaSt.allPure ? (
@@ -1004,7 +1004,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
 
                       {/* Rasio */}
                       <td className="py-2 px-1 text-right font-mono tabular-nums">
-                        {item.kabupaten.harga2026 > 0 ? (
+                        {item.kabupaten.harga2027 > 0 && item.kabupaten.harga2026 > 0 ? (
                           <span
                             className={`inline-block font-bold px-1.5 py-0.5 rounded text-[10px] ${
                               item.kabupaten.rasio > 120
@@ -1017,21 +1017,25 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                             {formatPercent(item.kabupaten.rasio)}%
                           </span>
                         ) : (
-                          <span className="text-slate-400 font-mono" title="Data 2026 tidak dicacah">-</span>
+                          <span className="text-slate-400 font-mono" title="Data tidak tersedia">-</span>
                         )}
                       </td>
 
                       {/* Koefisien Variasi */}
                       <td className="py-2 px-1 text-right font-mono tabular-nums">
-                        <span
-                          className={`inline-block font-bold px-1.5 py-0.5 rounded text-[10px] ${
-                            isHighCV
-                              ? 'bg-amber-100 text-amber-900 border border-amber-200'
-                              : 'text-slate-600'
-                          }`}
-                        >
-                          {formatPercent(item.kabupaten.koefisienVariasi)}%
-                        </span>
+                        {item.kabupaten.harga2027 > 0 ? (
+                          <span
+                            className={`inline-block font-bold px-1.5 py-0.5 rounded text-[10px] ${
+                              isHighCV
+                                ? 'bg-amber-100 text-amber-900 border border-amber-200'
+                                : 'text-slate-600'
+                            }`}
+                          >
+                            {formatPercent(item.kabupaten.koefisienVariasi)}%
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 font-mono">-</span>
+                        )}
                       </td>
 
                       {/* Status Rekon (Hanya 2 Status: belum_rekon & rekon_selesai) */}

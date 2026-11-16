@@ -40,7 +40,7 @@ interface DocumentsViewProps {
 const DOC_CATEGORIES = [
   'Semua Kategori',
   'Berita Acara Rekon',
-  'Data Tabel 7.1',
+  'Data Harga Tahun Berjalan',
   'Data Rekonda 2026',
   'LK & Bukti Sewa Alat',
   'Surat Tugas / Pendukung'
@@ -110,7 +110,10 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     return documents.filter((doc) => {
       if (filterCategory !== 'Semua Kategori') {
         const docCat = String(doc.metadata?.kategori || '');
-        if (docCat !== filterCategory) return false;
+        const isCurrentYearMatch =
+          filterCategory === 'Data Harga Tahun Berjalan' &&
+          (docCat === 'Data Harga Tahun Berjalan' || docCat === 'Data Tabel 7.1');
+        if (docCat !== filterCategory && !isCurrentYearMatch) return false;
       }
       if (!q) return true;
       return (
@@ -254,6 +257,30 @@ export const DocumentsView: React.FC<DocumentsViewProps> = ({
     }
     return <File className="w-5 h-5 text-slate-500 shrink-0" />;
   };
+
+  if (!isPemilik) {
+    return (
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-8 text-center max-w-xl mx-auto my-8">
+        <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center mx-auto mb-3">
+          <Lock className="w-6 h-6" />
+        </div>
+        <h2 className="text-base font-extrabold text-slate-900 mb-1">
+          Akses Terbatas — Khusus Admin Provinsi
+        </h2>
+        <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+          Menu <strong>Dokumen &amp; Arsip</strong> hanya dapat diakses oleh akun <strong>Admin Provinsi (BPS Kalbar)</strong>. Akun Admin Kab/Kota berfokus pada penyelesaian <strong>Tabel Anomali Rekon</strong> dan konfirmasi sewa alat wilayahnya.
+        </p>
+        <button
+          type="button"
+          onClick={onOpenAuth}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer transition-colors"
+        >
+          <Lock className="w-3.5 h-3.5" />
+          <span>Ganti Akun / Masuk sebagai Admin Provinsi</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
