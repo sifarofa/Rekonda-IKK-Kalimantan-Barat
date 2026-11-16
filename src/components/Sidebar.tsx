@@ -12,16 +12,17 @@ import {
   Building2,
   ShieldCheck,
   CheckCircle2,
-  Layers,
   FileDown,
-  Calculator
+  Calculator,
+  FolderOpen
 } from 'lucide-react';
 import { UserAuth } from '../types/rekonda';
 
 interface SidebarProps {
-  activeView: 'rekon_daerah' | 'anomali_rekon';
-  onSelectView: (view: 'rekon_daerah' | 'anomali_rekon') => void;
+  activeView: 'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip';
+  onSelectView: (view: 'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip') => void;
   anomalyCount: number;
+  documentsCount: number;
   currentUser: UserAuth;
   onOpenAuth: () => void;
   onOpenLandingLogin: () => void;
@@ -40,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeView,
   onSelectView,
   anomalyCount,
+  documentsCount,
   currentUser,
   onOpenAuth,
   onOpenLandingLogin,
@@ -216,7 +218,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </button>
 
-              {/* Menu 3: LK Sewa Alat (5101 - 5803) - Khusus Admin Provinsi */}
+              {/* Menu 3: Dokumen & Arsip Cloud */}
+              <button
+                type="button"
+                onClick={() => onSelectView('dokumen_arsip')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-bold transition-all text-left cursor-pointer ${
+                  activeView === 'dokumen_arsip'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                }`}
+              >
+                <FolderOpen className="w-4 h-4 shrink-0 text-emerald-300" />
+                <div className="flex-1 truncate">
+                  <div className="font-bold flex items-center justify-between">
+                    <span>Dokumen &amp; Arsip</span>
+                    {documentsCount > 0 && (
+                      <span className="bg-emerald-500/30 border border-emerald-400/50 text-emerald-100 text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                        {documentsCount}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] opacity-80 font-normal truncate">
+                    Upload &amp; Sinkronisasi Cloud
+                  </div>
+                </div>
+              </button>
+
+              {/* Menu 4: LK Sewa Alat (5101 - 5803) - Khusus Admin Provinsi */}
               {isPemilik && onOpenLkSewaAlat && (
                 <button
                   type="button"

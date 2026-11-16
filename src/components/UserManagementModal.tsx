@@ -21,7 +21,8 @@ import {
   getRegisteredAdmins,
   saveRegisteredAdmin,
   deleteRegisteredAdmin,
-  generateDefaultAllKabupatenAdmins
+  generateDefaultAllKabupatenAdmins,
+  subscribeRegisteredAdmins
 } from '../utils/userAdminStorage';
 
 interface UserManagementModalProps {
@@ -60,15 +61,19 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) {
-      loadAdmins();
-      setShowForm(false);
-      setEditingAdminId(null);
-      setErrorMessage(null);
-      if (isKabupaten && currentUser.kabupatenKode) {
-        setFormKabKode(currentUser.kabupatenKode);
-      }
+    if (!isOpen) return;
+    loadAdmins();
+    setShowForm(false);
+    setEditingAdminId(null);
+    setErrorMessage(null);
+    if (isKabupaten && currentUser.kabupatenKode) {
+      setFormKabKode(currentUser.kabupatenKode);
     }
+
+    const unsubscribe = subscribeRegisteredAdmins((nextAdmins) => {
+      setAdmins(nextAdmins);
+    });
+    return unsubscribe;
   }, [isOpen, isKabupaten, currentUser.kabupatenKode]);
 
   if (!isOpen) return null;

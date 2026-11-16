@@ -13,7 +13,8 @@ import {
   LogOut,
   Lock,
   Menu,
-  Users
+  Users,
+  FolderOpen
 } from 'lucide-react';
 import { UserAuth } from '../types/rekonda';
 
@@ -28,9 +29,10 @@ interface HeaderNavProps {
   onOpenDisplayAdjust: () => void;
   onOpenUserManagement?: () => void;
   onToggleMobileSidebar?: () => void;
-  activeView: 'rekon_daerah' | 'anomali_rekon';
-  onSelectView: (view: 'rekon_daerah' | 'anomali_rekon') => void;
+  activeView: 'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip';
+  onSelectView: (view: 'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip') => void;
   anomalyCount: number;
+  documentsCount?: number;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -46,7 +48,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onToggleMobileSidebar,
   activeView,
   onSelectView,
-  anomalyCount
+  anomalyCount,
+  documentsCount = 0
 }) => {
   const isPemilik = currentUser.role === 'pemilik' || currentUser.isOwner;
   const isKabupaten = currentUser.role === 'kabupaten';
@@ -138,6 +141,24 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               {anomalyCount > 0 && (
                 <span className="ml-1 bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
                   {anomalyCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectView('dokumen_arsip')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer relative ${
+                activeView === 'dokumen_arsip'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+              }`}
+            >
+              <FolderOpen className="w-3.5 h-3.5 text-emerald-300" />
+              <span>Dokumen</span>
+              {documentsCount > 0 && (
+                <span className="ml-1 bg-emerald-500 text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                  {documentsCount}
                 </span>
               )}
             </button>
@@ -252,34 +273,52 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 
         {/* Mobile View Switcher Tabs (Shown on small screens) */}
         <div className="sm:hidden pb-2.5 pt-0.5">
-          <div className="grid grid-cols-2 gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700/80">
+          <div className="grid grid-cols-3 gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700/80">
             <button
               type="button"
               onClick={() => onSelectView('rekon_daerah')}
-              className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+              className={`inline-flex items-center justify-center gap-1 py-1.5 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
                 activeView === 'rekon_daerah'
                   ? 'bg-rose-600 text-white shadow-xs'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <LayoutDashboard className="w-3.5 h-3.5" />
-              <span>Rekon Daerah</span>
+              <LayoutDashboard className="w-3 h-3" />
+              <span>Rekon</span>
             </button>
 
             <button
               type="button"
               onClick={() => onSelectView('anomali_rekon')}
-              className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer relative ${
+              className={`inline-flex items-center justify-center gap-1 py-1.5 rounded-md text-[11px] font-bold transition-all cursor-pointer relative ${
                 activeView === 'anomali_rekon'
                   ? 'bg-amber-600 text-white shadow-xs'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-300" />
-              <span>Anomali Rekon</span>
+              <AlertTriangle className="w-3 h-3 text-amber-300" />
+              <span>Anomali</span>
               {anomalyCount > 0 && (
-                <span className="ml-1 bg-rose-500 text-white text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                <span className="bg-rose-500 text-white text-[9px] font-extrabold px-1 rounded-full">
                   {anomalyCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectView('dokumen_arsip')}
+              className={`inline-flex items-center justify-center gap-1 py-1.5 rounded-md text-[11px] font-bold transition-all cursor-pointer relative ${
+                activeView === 'dokumen_arsip'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <FolderOpen className="w-3 h-3 text-emerald-300" />
+              <span>Dokumen</span>
+              {documentsCount > 0 && (
+                <span className="bg-emerald-500 text-white text-[9px] font-extrabold px-1 rounded-full">
+                  {documentsCount}
                 </span>
               )}
             </button>

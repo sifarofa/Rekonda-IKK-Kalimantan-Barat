@@ -31,6 +31,7 @@ import {
   processDual2026Merge,
   ParseResult
 } from '../utils/templateParsers';
+import { uploadDocumentToSupabase } from '../services/supabaseDocuments';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -63,6 +64,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [inputMethod, setInputMethod] = useState<'upload' | 'paste'>('upload');
   const [pastedText, setPastedText] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [parseError, setParseError] = useState<string>('');
   const [successInfo, setSuccessInfo] = useState<string>('');
@@ -125,16 +127,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   // Handle local File selection
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
+    const pickedFile = e.target.files?.[0];
+    if (!pickedFile) return;
 
-    setFileName(selectedFile.name);
+    setSelectedFile(pickedFile);
+    setFileName(pickedFile.name);
     setParseError('');
     setSuccessInfo('');
     setIsProcessing(true);
 
     try {
-      const rows = await parseFileToRows(selectedFile);
+      const rows = await parseFileToRows(pickedFile);
       if (!rows || rows.length === 0) {
         setParseError('Berkas Excel / CSV kosong.');
         setParseResult(null);
@@ -183,6 +186,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   // Load Built-in Template Sample
   const handleLoadSample = async (type: 'tabel71' | 'rekonnas' | 'webentry' | 'auto_merge') => {
     setIsProcessing(true);
+    setSelectedFile(null);
     setParseError('');
     setSuccessInfo('');
 
@@ -241,10 +245,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   };
 
-  // Submit & Apply
-  const handleProcessUpload = () => {
+  // Submit, Upload to Supabase Storage & app_documents, and Apply
+  const handleProcessUpload = async () => {
     if (!currentUser.isOwner && !onQuickLoginAsOwner) {
-      alert('Akses ditolak: Hanya Admin Provinsi yang dapat memperbarui data master.');
+      setParseError('Akses ditolak: Hanya Admin Provinsi yang dapat memperbarui data master.');
       return;
     }
     if (!parseResult || parseResult.updatedList.length === 0) {
@@ -252,7 +256,36 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       return;
     }
 
+    if (selectedFile) {
+      setIsProcessing(true);
+      try {
+        await uploadDocumentToSupabase({
+          file: selectedFile,
+          title:
+            activeTab === 'tabel71'
+              ? `Tabel 7.1 [${selectedKomoditas.kode}] ${selectedKomoditas.nama}`
+              : `Rekonda 2026 [${selectedKomoditas.kode}] ${selectedKomoditas.nama}`,
+          metadata: {
+            kategori: activeTab === 'tabel71' ? 'Data Tabel 7.1' : 'Data Rekonda 2026',
+            sheet_type: activeTab,
+            source_2026: activeTab === 'rekonda26' ? source2026 : undefined,
+            komoditas_kode: selectedKomoditas.kode,
+            komoditas_nama: selectedKomoditas.nama,
+            affected_kab_count: parseResult.affectedKabCount,
+            uploaded_by: currentUser.email || currentUser.name || 'Admin Provinsi'
+          }
+        });
+      } catch (err: any) {
+        setParseError(err.message || 'Gagal mengunggah dokumen ke Supabase Storage.');
+        setIsProcessing(false);
+        return;
+      } finally {
+        setIsProcessing(false);
+      }
+    }
+
     onApplyData(parseResult.updatedList, activeTab);
+    setSelectedFile(null);
     onClose();
   };
 
