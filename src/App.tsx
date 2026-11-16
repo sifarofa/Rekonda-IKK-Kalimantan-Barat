@@ -1,0 +1,1325 @@
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { HeaderNav } from './components/HeaderNav';
+import { FilterSection } from './components/FilterSection';
+import { RekonTable } from './components/RekonTable';
+import { GrafikRekonda } from './components/GrafikRekonda';
+import { AnomaliRekonTable } from './components/AnomaliRekonTable';
+import { DetailModal } from './components/DetailModal';
+import { RespondentFormModal } from './components/RespondentFormModal';
+import { NotePreviewModal } from './components/NotePreviewModal';
+import { AuthModal } from './components/AuthModal';
+import { UploadModal } from './components/UploadModal';
+import { DisplayAdjustModal } from './components/DisplayAdjustModal';
+import { LoginLandingPage } from './components/LoginLandingPage';
+import { Sidebar } from './components/Sidebar';
+import { UserManagementModal } from './components/UserManagementModal';
+import { LkSewaAlatModal } from './components/LkSewaAlatModal';
+import { PROVINSI_LIST, KOMODITAS_LIST, INITIAL_KABUPATEN_DATA } from './data/mockData';
+import {
+  KabupatenRekon,
+  RespondenData,
+  Komoditas,
+  Provinsi,
+  UserAuth,
+  StatusRekon,
+  DisplaySettings,
+  TipeSewaAlat,
+  LkSewaAlatData
+} from './types/rekonda';
+import { calculateStats, getDominantBrand, formatRupiahNumber } from './utils/formatters';
+import { getSewaAlatKabStatus, isSewaAlatKomoditas } from './utils/sewaAlatCalculator';
+import {
+  exportCurrentTableToExcel,
+  exportSeluruhRespondenToExcel,
+  exportSeluruhKualitasToExcel
+} from './utils/excelExport';
+import { CheckCircle2 } from 'lucide-react';
+
+const LOCAL_STORAGE_KEY = 'rekonda_state_2026_2027_v6';
+const AUTH_STORAGE_KEY = 'rekonda_auth_user_v2';
+
+export default function App() {
+  // Navigation View: 'rekon_daerah' | 'anomali_rekon'
+  const [activeView, setActiveView] = useState<'rekon_daerah' | 'anomali_rekon'>('rekon_daerah');
+
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<UserAuth>(() => {
+    try {
+      const savedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (savedAuth) {
+        return JSON.parse(savedAuth);
+      }
+    } catch {
+      // ignore
+    }
+    // Default: Not logged in (Guest)
+    return {
+      isLoggedIn: false,
+      email: null,
+      name: null,
+      isOwner: false,
+      role: 'tamu'
+    };
+  });
+
+  // Landing Page state (open by default if not logged in, or opened via Menu Login)
+  const [showLandingLogin, setShowLandingLogin] = useState<boolean>(() => {
+    try {
+      const savedAuth = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (savedAuth) {
+        const parsed = JSON.parse(savedAuth);
+        if (parsed.isLoggedIn) return false;
+      }
+    } catch {}
+    return true;
+  });
+
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+  const [isDisplayAdjustOpen, setIsDisplayAdjustOpen] = useState<boolean>(false);
+  const [isUserManagementOpen, setIsUserManagementOpen] = useState<boolean>(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  const [lkModalState, setLkModalState] = useState<{
+    isOpen: boolean;
+    komoditasKode: string;
+    kabupatenKode: string;
+    respondentId: string | null;
+  }>({
+    isOpen: false,
+    komoditasKode: '5101',
+    kabupatenKode: '6101',
+    respondentId: null
+  });
+
+  // Device & Display Settings (Persisted in localStorage)
+  const [displaySettings, setDisplaySettings] = useState<DisplaySettings>(() => {
+    try {
+      const saved = localStorage.getItem('rekonda_display_settings');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { density: 'normal', scale: 'normal', width: 'contained' };
+  });
+
+  const handleUpdateDisplaySettings = (newSettings: DisplaySettings) => {
+    setDisplaySettings(newSettings);
+    try {
+      localStorage.setItem('rekonda_display_settings', JSON.stringify(newSettings));
+    } catch {}
+    showToast('Tampilan berhasil disesuaikan.');
+  };
+
+  const handleResetDisplaySettings = () => {
+    const defaultSettings: DisplaySettings = { density: 'normal', scale: 'normal', width: 'contained' };
+    setDisplaySettings(defaultSettings);
+    try {
+      localStorage.setItem('rekonda_display_settings', JSON.stringify(defaultSettings));
+    } catch {}
+    showToast('Pengaturan tampilan dikembalikan ke standar.');
+  };
+
+  // Selected Province & Commodity
+  const [selectedProvinsi, setSelectedProvinsi] = useState<Provinsi>(PROVINSI_LIST[0]);
+  const [komoditasIndex, setKomoditasIndex] = useState<number>(0);
+  const selectedKomoditas = KOMODITAS_LIST[komoditasIndex] || KOMODITAS_LIST[0];
+
+  // Helper to ensure default template notes are blank, prices are cleaned, and status is 2-state
+  const sanitizeCatatan = (db: Record<string, KabupatenRekon[]>): Record<string, KabupatenRekon[]> => {
+    const cleaned: Record<string, KabupatenRekon[]> = {};
+    for (const [key, list] of Object.entries(db)) {
+      if (Array.isArray(list)) {
+        cleaned[key] = list.map((item) => {
+          const c = (item.catatan || '').trim();
+          const isAuto =
+            c.includes('Variasi harga antar') ||
+            c.includes('Perubahan harga antar') ||
+            c.includes('Perlu verifikasi') ||
+            c.includes('terjustifikasi faktor') ||
+            c.includes('Harga stabil') ||
+            c.includes('Perubahan harga signifikan');
+
+          // Clean mock 100000 price
+          const isMock100k = item.harga2026 === 100000;
+          const cleanHarga2026 = isMock100k ? 0 : item.harga2026 || 0;
+          const cleanRasio = cleanHarga2026 > 0
+            ? (item.rasio > 0 ? item.rasio : parseFloat(((item.harga2027 / cleanHarga2026) * 100).toFixed(2)))
+            : 0;
+
+          // Default status is strictly 'belum_rekon' for all kab/kota and all commodities unless explicitly marked 'rekon_selesai'
+          const normalizedStatus: StatusRekon = item.statusRekon === 'rekon_selesai'
+            ? 'rekon_selesai'
+            : 'belum_rekon';
+
+          const fallbackItem = INITIAL_KABUPATEN_DATA[key]?.find((k) => k.kode === item.kode);
+          const respondents = (item.respondents && item.respondents.length > 0)
+            ? item.respondents
+            : (fallbackItem?.respondents || []);
+
+          return {
+            ...item,
+            harga2026: cleanHarga2026,
+            hargaTw3_2025: isMock100k ? 0 : item.hargaTw3_2025 || 0,
+            hargaTw4_2025: isMock100k ? 0 : item.hargaTw4_2025 || 0,
+            hargaTw1_2026: isMock100k ? 0 : item.hargaTw1_2026 || 0,
+            hargaTw2_2026: isMock100k ? 0 : item.hargaTw2_2026 || 0,
+            rasio: cleanRasio,
+            statusRekon: normalizedStatus,
+            isVerified: normalizedStatus === 'rekon_selesai',
+            catatan: isAuto ? '' : c,
+            respondents: respondents
+          };
+        });
+      }
+    }
+    return cleaned;
+  };
+
+  // Database of all datasets keyed by `${provinsiKode}_${komoditasKode}`
+  const [database, setDatabase] = useState<Record<string, KabupatenRekon[]>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const sample = parsed['61_1902'] || parsed['61_0102'];
+        const k6106 = sample?.find((k: any) => k.kode === '6106');
+        if (k6106 && k6106.nama.toUpperCase().includes('KETAPANG') && Object.keys(parsed).length >= 50) {
+          return sanitizeCatatan(parsed);
+        }
+      }
+    } catch {
+      // Fallback
+    }
+    return sanitizeCatatan(INITIAL_KABUPATEN_DATA);
+  });
+
+  // Dynamic Chart Data synced with Table sorting
+  const [chartSortedData, setChartSortedData] = useState<KabupatenRekon[]>([]);
+
+  // Selected for interactions
+  const [selectedKabupatenId, setSelectedKabupatenId] = useState<string | null>(null);
+  const [detailModalKab, setDetailModalKab] = useState<KabupatenRekon | null>(null);
+  const [noteModalKab, setNoteModalKab] = useState<KabupatenRekon | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Respondent Form Modal State
+  const [respondentForm, setRespondentForm] = useState<{
+    isOpen: boolean;
+    initialData?: RespondenData | null;
+    defaultTahun?: number;
+    defaultTriwulan?: number;
+  }>({
+    isOpen: false,
+    initialData: null,
+    defaultTahun: 2026,
+    defaultTriwulan: 3
+  });
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3200);
+  }, []);
+
+  // Fetch initial data from server on startup
+  useEffect(() => {
+    fetch('/api/data')
+      .then((res) => res.json())
+      .then((res) => {
+        if (res.success && res.data && Object.keys(res.data).length >= 50) {
+          const sample = res.data['61_1902'] || res.data['61_0102'];
+          const k6106 = sample?.find((k: any) => k.kode === '6106');
+          const hasCorrectedCodes =
+            Boolean(res.data['61_1402']) &&
+            Boolean(res.data['61_5001']) &&
+            Boolean(res.data['61_6001']) &&
+            !res.data['61_1201'] &&
+            !res.data['61_4201'];
+          if (k6106 && k6106.nama.toUpperCase().includes('KETAPANG') && hasCorrectedCodes) {
+            setDatabase(sanitizeCatatan(res.data));
+            return;
+          }
+        }
+        // Initialize server with authentic 89-quality database
+        fetch('/api/save-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ database: sanitizeCatatan(INITIAL_KABUPATEN_DATA) })
+        }).catch(() => {});
+        setDatabase(sanitizeCatatan(INITIAL_KABUPATEN_DATA));
+      })
+      .catch((err) => {
+        console.log('Server not responding or local dev mode:', err);
+      });
+  }, []);
+
+  // Auth Login Handlers
+  const handleLoginOwner = (email: string, name: string) => {
+    const authObj: UserAuth = {
+      isLoggedIn: true,
+      email,
+      name: 'Admin Provinsi (BPS Kalbar)',
+      isOwner: true,
+      role: 'pemilik'
+    };
+    setCurrentUser(authObj);
+    try {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authObj));
+    } catch {}
+    setShowLandingLogin(false);
+    showToast('Berhasil masuk sebagai Admin Provinsi (BPS Kalbar). Akses penuh aktif.');
+  };
+
+  const handleLoginKabupaten = (kode: string, nama: string) => {
+    const authObj: UserAuth = {
+      isLoggedIn: true,
+      email: `bps${kode}@bps.go.id`,
+      name: `Admin BPS ${nama}`,
+      isOwner: false,
+      role: 'kabupaten',
+      kabupatenKode: kode,
+      kabupatenNama: nama
+    };
+    setCurrentUser(authObj);
+    try {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authObj));
+    } catch {}
+    // User requested: "ada login untuk masing2 kabupaten/kota dimana mereka hanya bisa mengakses tabel anomali rekon untuk kab/kota masing2"
+    setActiveView('anomali_rekon');
+    setShowLandingLogin(false);
+    showToast(`Berhasil masuk sebagai Admin BPS ${nama} [${kode}]. Mode Anomali Wilayah aktif.`);
+  };
+
+  const handleEnterAsGuest = () => {
+    const guestAuth: UserAuth = {
+      isLoggedIn: false,
+      email: null,
+      name: 'Tamu (Pratinjau)',
+      isOwner: false,
+      role: 'tamu'
+    };
+    setCurrentUser(guestAuth);
+    try {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(guestAuth));
+    } catch {}
+    setShowLandingLogin(false);
+    showToast('Memasuki aplikasi dalam Mode Tamu (Pratinjau Publik).');
+  };
+
+  const handleLogin = (email: string, name: string) => {
+    const isOwner = email.toLowerCase() === 'harga6100@gmail.com';
+    const authObj: UserAuth = {
+      isLoggedIn: true,
+      email,
+      name,
+      isOwner,
+      role: isOwner ? 'pemilik' : 'tamu'
+    };
+    setCurrentUser(authObj);
+    try {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authObj));
+    } catch {}
+    setShowLandingLogin(false);
+    showToast(isOwner ? 'Berhasil masuk sebagai Pemilik Akun (Akses Penuh).' : `Berhasil masuk sebagai ${name}.`);
+  };
+
+  const handleLogout = () => {
+    const guestAuth: UserAuth = {
+      isLoggedIn: false,
+      email: null,
+      name: null,
+      isOwner: false,
+      role: 'tamu'
+    };
+    setCurrentUser(guestAuth);
+    try {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch {}
+    setShowLandingLogin(true);
+    showToast('Anda telah keluar dari akun.');
+  };
+
+  // Current Key
+  const currentKey = `${selectedProvinsi.kode}_${selectedKomoditas.kode}`;
+
+  // Helper to get or generate data for current combo
+  const currentKabupatenData = useMemo(() => {
+    if (database[currentKey]) {
+      return database[currentKey];
+    }
+    const baseList = INITIAL_KABUPATEN_DATA['61_0102'] || [];
+    const multiplierMap: Record<string, number> = {
+      '0101': 1.6,
+      '0103': 1.8,
+      '0104': 0.7,
+      '0201': 0.9,
+      '0205': 15.0,
+      '0301': 4.5,
+      '0401': 1.3,
+      '0402': 1.1,
+      '0501': 12.0
+    };
+    const mult = multiplierMap[selectedKomoditas.kode] || 1;
+
+    return baseList.map((item) => {
+      const h27 = Math.round(item.harga2027 * mult);
+      const h26 = Math.round(item.harga2026 * mult);
+      return {
+        ...item,
+        id: `${selectedProvinsi.kode}_${item.kode}_${selectedKomoditas.kode}`,
+        harga2027: h27,
+        hargaTw3_2026: Math.round(item.hargaTw3_2026 * mult),
+        hargaTw4_2026: Math.round(item.hargaTw4_2026 * mult),
+        hargaTw1_2027: Math.round(item.hargaTw1_2027 * mult),
+        hargaTw2_2027: Math.round(item.hargaTw2_2027 * mult),
+        harga2026: h26,
+        rasio: h26 > 0 ? parseFloat(((h27 / h26) * 100).toFixed(2)) : 100,
+        namaKualitas: `${selectedKomoditas.nama} Standar`,
+        catatan: `Survei berkala untuk ${selectedKomoditas.nama} di wilayah ${item.nama}.`,
+        statusRekon: item.statusRekon || 'belum_rekon',
+        aksiRekon: item.aksiRekon || '',
+        respondents: item.respondents.map((r, i) => ({
+          ...r,
+          id: `${item.kode}_res_${i}`,
+          harga: Math.round(r.harga * mult)
+        }))
+      };
+    });
+  }, [database, currentKey, selectedProvinsi.kode, selectedKomoditas]);
+
+  // Recalculate kabupaten metrics according to IKK cross-year 2026/2027 specs
+  // For Sewa Alat (5101 - 5803): main table aggregates automatically ONLY once ALL respondents are pure rent (sewa_murni or LK-computed all_in)
+  const recalculateKabupatenMetrics = (
+    kab: KabupatenRekon,
+    isSewaAlatFlag?: boolean
+  ): KabupatenRekon => {
+    const res = kab.respondents || [];
+    const isSewaAlat = isSewaAlatFlag ?? false;
+
+    if (isSewaAlat) {
+      const st = getSewaAlatKabStatus(kab);
+      const derivedTipeSewa: TipeSewaAlat = st.allPure
+        ? st.hasAnyLk
+          ? 'all_in'
+          : 'sewa_murni'
+        : st.waitingLkCount > 0
+        ? 'all_in'
+        : 'belum_konfirmasi';
+
+      // If kab has respondents and NOT all are pure rent yet, preserve main RekonTable aggregate until all respondents are converted/confirmed
+      if (res.length > 0 && !st.allPure) {
+        return {
+          ...kab,
+          tipeSewa: derivedTipeSewa
+        };
+      }
+
+      // If kab has 0 respondents and LK was applied directly at kab level
+      if (res.length === 0) {
+        const hasKabLk =
+          kab.tipeSewa === 'all_in' &&
+          Boolean(kab.lkSewaAlat) &&
+          (kab.lkSewaAlat?.hasilSewaMurniBulan ?? 0) > 0;
+        const nextHarga2027 = hasKabLk ? Math.round(kab.lkSewaAlat!.hasilSewaMurniBulan) : kab.harga2027;
+        const nextRasio =
+          kab.harga2026 > 0 ? parseFloat(((nextHarga2027 / kab.harga2026) * 100).toFixed(2)) : 0;
+        return {
+          ...kab,
+          tipeSewa: derivedTipeSewa,
+          harga2027: nextHarga2027,
+          rasio: nextRasio
+        };
+      }
+
+      // Otherwise all respondents are pure rent -> fall through to compute aggregate TW, Harga 2027, CV, Rasio!
+      kab = { ...kab, tipeSewa: derivedTipeSewa };
+    }
+
+    // Quarters for Current Year (IKK 2027: TW 3 & 4 2026, TW 1 & 2 2027)
+    const tw3_26 = res.filter((r) => r.tahun === 2026 && r.triwulan === 3).map((r) => r.harga);
+    const tw4_26 = res.filter((r) => r.tahun === 2026 && r.triwulan === 4).map((r) => r.harga);
+    const tw1_27 = res.filter((r) => r.tahun === 2027 && r.triwulan === 1).map((r) => r.harga);
+    const tw2_27 = res.filter((r) => r.tahun === 2027 && r.triwulan === 2).map((r) => r.harga);
+
+    const statTw3_26 = calculateStats(tw3_26);
+    const statTw4_26 = calculateStats(tw4_26);
+    const statTw1_27 = calculateStats(tw1_27);
+    const statTw2_27 = calculateStats(tw2_27);
+
+    // Calculate available quarters average for Harga 2027
+    const availableQuarterMeans = [
+      statTw3_26.mean,
+      statTw4_26.mean,
+      statTw1_27.mean,
+      statTw2_27.mean
+    ].filter((m) => m > 0);
+
+    const hasCalculatedLkMurni =
+      !isSewaAlat &&
+      kab.tipeSewa === 'all_in' &&
+      Boolean(kab.lkSewaAlat) &&
+      (kab.lkSewaAlat?.hasilSewaMurniBulan ?? 0) > 0;
+
+    const newHarga2027 = hasCalculatedLkMurni
+      ? Math.round(kab.lkSewaAlat!.hasilSewaMurniBulan)
+      : availableQuarterMeans.length > 0
+      ? Math.round(availableQuarterMeans.reduce((a, b) => a + b, 0) / availableQuarterMeans.length)
+      : kab.harga2027;
+
+    // Koefisien Variasi: variasi harga antar responden di kab/kota yang sama (tahun berjalan)
+    const allCurrentPrices = res
+      .filter((r) => (r.tahun === 2026 && (r.triwulan === 3 || r.triwulan === 4)) || (r.tahun === 2027 && (r.triwulan === 1 || r.triwulan === 2)))
+      .map((r) => r.harga);
+    
+    const respondentStats = calculateStats(allCurrentPrices.length > 0 ? allCurrentPrices : [kab.harga2027]);
+
+    // Dominant Brand (Mode)
+    const newDominantBrand = getDominantBrand(res, kab.namaKualitas || 'Standar');
+
+    // Rasio: (Harga 2027 / Harga 2026) * 100 (0 jika 2026 tidak dicacah / 0)
+    const newRasio =
+      kab.harga2026 > 0 ? parseFloat(((newHarga2027 / kab.harga2026) * 100).toFixed(2)) : 0;
+
+    return {
+      ...kab,
+      hargaTw3_2026: statTw3_26.mean > 0 ? statTw3_26.mean : kab.hargaTw3_2026,
+      hargaTw4_2026: statTw4_26.mean > 0 ? statTw4_26.mean : kab.hargaTw4_2026,
+      hargaTw1_2027: statTw1_27.mean > 0 ? statTw1_27.mean : kab.hargaTw1_2027,
+      hargaTw2_2027: statTw2_27.mean > 0 ? statTw2_27.mean : kab.hargaTw2_2027,
+      harga2027: newHarga2027,
+      koefisienVariasi: respondentStats.cv,
+      namaKualitas: newDominantBrand,
+      rasio: newRasio
+    };
+  };
+
+  // Sync to database and server
+  const saveUpdatedList = (updatedList: KabupatenRekon[]) => {
+    setDatabase((prev) => {
+      const nextDb = {
+        ...prev,
+        [currentKey]: updatedList
+      };
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextDb));
+      } catch {}
+
+      // Server sync
+      fetch('/api/save-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ database: nextDb })
+      }).catch((err) => console.log('Server sync notice:', err));
+
+      return nextDb;
+    });
+  };
+
+  // Update a single Kabupaten record
+  const handleUpdateKabupaten = (updated: KabupatenRekon) => {
+    const recomputed = recalculateKabupatenMetrics(
+      updated,
+      isSewaAlatKomoditas(selectedKomoditas.kode)
+    );
+    const currentList = [...currentKabupatenData];
+    const index = currentList.findIndex((item) => item.id === recomputed.id || item.kode === recomputed.kode);
+    if (index >= 0) {
+      currentList[index] = recomputed;
+    } else {
+      currentList.push(recomputed);
+    }
+    saveUpdatedList(currentList);
+
+    // Sync active detail modal
+    if (detailModalKab && (detailModalKab.id === recomputed.id || detailModalKab.kode === recomputed.kode)) {
+      setDetailModalKab(recomputed);
+    }
+
+    // Also persist single update to server
+    fetch('/api/kabupaten/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: currentKey, kabupaten: recomputed })
+    }).catch(() => {});
+  };
+
+  // Update Anomali Row with single Catatan field across any commodity key
+  const handleUpdateAnomali = (
+    targetKey: string,
+    kabupatenId: string,
+    status: StatusRekon,
+    catatan: string
+  ) => {
+    setDatabase((prev) => {
+      const list = [...(prev[targetKey] || [])];
+      const target = list.find((k) => k.id === kabupatenId || k.kode === kabupatenId);
+      if (target) {
+        target.statusRekon = status;
+        target.catatan = catatan;
+        target.isVerified = status === 'rekon_selesai';
+      }
+      const nextDb = { ...prev, [targetKey]: list };
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextDb));
+      } catch {}
+
+      fetch('/api/anomali/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: targetKey,
+          kabupatenId,
+          statusRekon: status,
+          catatan
+        })
+      }).catch(() => {});
+
+      return nextDb;
+    });
+
+    showToast(`Status Rekon & Catatan berhasil diperbarui.`);
+  };
+
+  // Open LK Penghitungan Sewa Alat Modal (Admin Provinsi ONLY)
+  const handleOpenLkModal = (
+    komoditasKode?: string,
+    kabupatenKode?: string,
+    respondentId?: string | null
+  ) => {
+    const isProvinsiAdmin = currentUser.isLoggedIn && (currentUser.isOwner || currentUser.role === 'pemilik');
+    if (!isProvinsiAdmin) {
+      if (!currentUser.isLoggedIn) {
+        setIsAuthModalOpen(true);
+      } else {
+        showToast('Akses terbatas: LK Penghitungan Sewa Alat hanya dapat diakses oleh Admin Provinsi.');
+      }
+      return;
+    }
+
+    const targetKom =
+      komoditasKode && isSewaAlatKomoditas(komoditasKode)
+        ? komoditasKode
+        : isSewaAlatKomoditas(selectedKomoditas.kode)
+        ? selectedKomoditas.kode
+        : '5101';
+
+    const targetKab = kabupatenKode || '6101';
+
+    setLkModalState({
+      isOpen: true,
+      komoditasKode: targetKom,
+      kabupatenKode: targetKab,
+      respondentId: respondentId || null
+    });
+  };
+
+  // Helper: persist a recomputed Kabupaten record to DB + server + active detailModal
+  const persistKabupatenChange = (
+    targetKey: string,
+    kabupatenKode: string,
+    updater: (kab: KabupatenRekon) => KabupatenRekon
+  ): KabupatenRekon | null => {
+    let updatedKabSnapshot: KabupatenRekon | null = null;
+    const isSewa = isSewaAlatKomoditas(targetKey.split('_')[1] || selectedKomoditas.kode);
+
+    setDatabase((prev) => {
+      const list = [...(prev[targetKey] || [])];
+      const idx = list.findIndex((k) => k.kode === kabupatenKode || k.id === kabupatenKode);
+      if (idx < 0) return prev;
+
+      const updatedRaw = updater(list[idx]);
+      const recomputed = recalculateKabupatenMetrics(updatedRaw, isSewa);
+      list[idx] = recomputed;
+      updatedKabSnapshot = recomputed;
+
+      const nextDb = { ...prev, [targetKey]: list };
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextDb));
+      } catch {}
+
+      fetch('/api/kabupaten/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: targetKey, kabupaten: recomputed })
+      }).catch(() => {});
+
+      fetch('/api/save-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ database: nextDb })
+      }).catch(() => {});
+
+      return nextDb;
+    });
+
+    if (
+      updatedKabSnapshot &&
+      detailModalKab &&
+      (detailModalKab as KabupatenRekon).kode === kabupatenKode
+    ) {
+      setDetailModalKab(updatedKabSnapshot);
+    }
+
+    return updatedKabSnapshot;
+  };
+
+  // Confirm Sewa Murni / All-In / Belum Konfirmasi per Responden (or Kab fallback when respondentId === null)
+  const handleChangeTipeSewa = (
+    targetKey: string,
+    kabupatenKode: string,
+    respondentId: string | null,
+    nextTipeSewa: TipeSewaAlat
+  ) => {
+    if (!currentUser.isLoggedIn) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    const isProvinsiAdmin = currentUser.isOwner || currentUser.role === 'pemilik';
+    const canEditTarget =
+      isProvinsiAdmin ||
+      (currentUser.role === 'kabupaten' && currentUser.kabupatenKode === kabupatenKode);
+
+    if (!canEditTarget) {
+      showToast(`Akses ditolak: Anda hanya berhak mengubah konfirmasi sewa wilayah [${currentUser.kabupatenKode}].`);
+      return;
+    }
+
+    const updatedKab = persistKabupatenChange(targetKey, kabupatenKode, (existing) => {
+      if (respondentId && existing.respondents && existing.respondents.length > 0) {
+        const nextRespondents = existing.respondents.map((r) => {
+          if (r.id !== respondentId) return r;
+          const restoredHarga =
+            nextTipeSewa !== 'all_in' &&
+            r.lkSewaAlat?.hargaAwalSebelumLk &&
+            r.lkSewaAlat.hargaAwalSebelumLk > 0
+              ? r.lkSewaAlat.hargaAwalSebelumLk
+              : r.harga;
+          return {
+            ...r,
+            tipeSewa: nextTipeSewa,
+            harga: restoredHarga
+          };
+        });
+        return {
+          ...existing,
+          respondents: nextRespondents
+        };
+      }
+
+      // Kab-level fallback (e.g. 0 respondents) or batch update
+      const restoredBaseHarga =
+        nextTipeSewa !== 'all_in' &&
+        existing.lkSewaAlat?.hargaAwalSebelumLk &&
+        existing.lkSewaAlat.hargaAwalSebelumLk > 0
+          ? existing.lkSewaAlat.hargaAwalSebelumLk
+          : existing.harga2027;
+
+      const nextRespondents = (existing.respondents || []).map((r) => {
+        const restoredHarga =
+          nextTipeSewa !== 'all_in' &&
+          r.lkSewaAlat?.hargaAwalSebelumLk &&
+          r.lkSewaAlat.hargaAwalSebelumLk > 0
+            ? r.lkSewaAlat.hargaAwalSebelumLk
+            : r.harga;
+        return {
+          ...r,
+          tipeSewa: nextTipeSewa,
+          harga: restoredHarga
+        };
+      });
+
+      return {
+        ...existing,
+        tipeSewa: nextTipeSewa,
+        harga2027: restoredBaseHarga,
+        respondents: nextRespondents
+      };
+    });
+
+    const komKode = targetKey.split('_')[1] || selectedKomoditas.kode;
+
+    if (nextTipeSewa === 'all_in') {
+      if (isProvinsiAdmin) {
+        handleOpenLkModal(komKode, kabupatenKode, respondentId);
+      } else {
+        showToast(
+          `Konfirmasi All-In tersimpan. Penghitungan Sewa Murni di LK akan dilakukan oleh Admin Provinsi.`
+        );
+      }
+      return;
+    }
+
+    const st = updatedKab ? getSewaAlatKabStatus(updatedKab) : null;
+    if (st && st.total > 0 && st.allPure) {
+      showToast(
+        `Seluruh responden [${kabupatenKode}] sudah Sewa Murni (${st.pureCount}/${st.total}). Tabel Rekon Daerah utama otomatis dihitung!`
+      );
+    } else {
+      showToast(
+        nextTipeSewa === 'sewa_murni'
+          ? `Status sewa dikonfirmasi sebagai Sewa Murni.${
+              st && st.total > 0 ? ` (${st.pureCount}/${st.total} responden siap)` : ''
+            }`
+          : `Status konfirmasi sewa dikembalikan ke Belum Konfirmasi.`
+      );
+    }
+  };
+
+  // Apply calculated LK Sewa Alat Murni -> updates Responden price first, then auto-updates main Tabel Rekon Daerah once ALL respondents in Kab/Kota are pure rent
+  const handleApplyLkResult = (
+    targetKey: string,
+    kabupatenKode: string,
+    respondentId: string | null,
+    lkData: LkSewaAlatData,
+    appendCatatan: boolean,
+    markRekonSelesai: boolean
+  ) => {
+    if (!currentUser.isLoggedIn) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    const updatedKab = persistKabupatenChange(targetKey, kabupatenKode, (existing) => {
+      const nextStatus: StatusRekon = markRekonSelesai
+        ? 'rekon_selesai'
+        : existing.statusRekon || 'belum_rekon';
+
+      let nextCatatan = existing.catatan || '';
+      if (appendCatatan) {
+        const allInInput =
+          lkData.mode === 'alat_berat'
+            ? lkData.biayaAllInBulan
+            : lkData.tarifAllInGenset || lkData.biayaAllInBulan;
+
+        if (respondentId) {
+          const respName =
+            existing.respondents.find((r) => r.id === respondentId)?.nama || respondentId;
+          const respTag = `[LK ${respName}: All-In Rp ${formatRupiahNumber(
+            allInInput
+          )} -> Murni Rp ${formatRupiahNumber(lkData.hasilSewaMurniBulan)} (${lkData.adjustPajakProfitPct}%)]`;
+          const escapedName = respName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          nextCatatan = nextCatatan
+            .replace(new RegExp(`\\s*\\[LK ${escapedName}:[^\\]]*\\]`, 'g'), '')
+            .trim();
+          nextCatatan = nextCatatan ? `${nextCatatan} ${respTag}` : respTag;
+        } else {
+          nextCatatan = nextCatatan.replace(/\s*\[LK Sewa Murni:[^\]]*\]/g, '').trim();
+          const lkNoteTag = `[LK Sewa Murni: All-In Rp ${formatRupiahNumber(
+            allInInput
+          )} -> Murni Rp ${formatRupiahNumber(lkData.hasilSewaMurniBulan)} (Adj. ${
+            lkData.adjustPajakProfitPct
+          }%${lkData.includeWorkshop && lkData.mode === 'alat_berat' ? ', incl. Workshop' : ''})]`;
+          nextCatatan = nextCatatan ? `${nextCatatan} ${lkNoteTag}` : lkNoteTag;
+        }
+      }
+
+      if (respondentId && existing.respondents && existing.respondents.length > 0) {
+        const nextRespondents = existing.respondents.map((r) => {
+          if (r.id !== respondentId) return r;
+          return {
+            ...r,
+            tipeSewa: 'all_in' as TipeSewaAlat,
+            lkSewaAlat: lkData,
+            harga: lkData.hasilSewaMurniBulan
+          };
+        });
+
+        return {
+          ...existing,
+          respondents: nextRespondents,
+          catatan: nextCatatan,
+          statusRekon: nextStatus,
+          isVerified: nextStatus === 'rekon_selesai'
+        };
+      }
+
+      // Kab-level fallback when 0 respondents exist
+      return {
+        ...existing,
+        tipeSewa: 'all_in',
+        lkSewaAlat: lkData,
+        harga2027: lkData.hasilSewaMurniBulan,
+        catatan: nextCatatan,
+        statusRekon: nextStatus,
+        isVerified: nextStatus === 'rekon_selesai'
+      };
+    });
+
+    const st = updatedKab ? getSewaAlatKabStatus(updatedKab) : null;
+    if (st && st.total > 0) {
+      if (st.allPure) {
+        showToast(
+          `Harga responden diubah ke Sewa Murni (Rp ${formatRupiahNumber(
+            lkData.hasilSewaMurniBulan
+          )}). Semua ${st.total} responden siap — Tabel Rekon Daerah utama otomatis diperbarui!`
+        );
+      } else {
+        showToast(
+          `Detail responden diperbarui (Rp ${formatRupiahNumber(
+            lkData.hasilSewaMurniBulan
+          )}). Progres Kab/Kota: ${st.pureCount}/${st.total} responden siap Sewa Murni.`
+        );
+      }
+    } else {
+      showToast(
+        `Biaya sewa murni (Rp ${formatRupiahNumber(
+          lkData.hasilSewaMurniBulan
+        )}) berhasil diterapkan ke Tabel Rekon Daerah & Tabel Anomali!`
+      );
+    }
+  };
+
+  // Upload Apply Data
+  const handleApplyUploadedData = (
+    updatedList: KabupatenRekon[],
+    sheetType: 'rekonda26' | 'tabel71'
+  ) => {
+    const isSewa = isSewaAlatKomoditas(selectedKomoditas.kode);
+    const recomputed = updatedList.map((item) => {
+      const metric = recalculateKabupatenMetrics(item, isSewa);
+      if (sheetType === 'rekonda26') {
+        metric.harga2026 = item.harga2026;
+        metric.hargaTw3_2025 = item.hargaTw3_2025;
+        metric.hargaTw4_2025 = item.hargaTw4_2025;
+        metric.hargaTw1_2026 = item.hargaTw1_2026;
+        metric.hargaTw2_2026 = item.hargaTw2_2026;
+        metric.rasio = (item.harga2026 > 0 && metric.harga2027 > 0)
+          ? parseFloat(((metric.harga2027 / item.harga2026) * 100).toFixed(2))
+          : 0;
+      }
+      return metric;
+    });
+    saveUpdatedList(recomputed);
+    showToast(
+      sheetType === 'rekonda26'
+        ? 'Data tahun sebelumnya (IKK Rekonda Responden) berhasil disinkronkan ke kolom Harga 2026!'
+        : 'Data tahun berjalan (Database Tabel 7.1) berhasil diperbarui ke kolom Harga 2027!'
+    );
+  };
+
+  // Stepper handlers
+  const handlePrevKomoditas = () => {
+    setKomoditasIndex((prev) => (prev > 0 ? prev - 1 : KOMODITAS_LIST.length - 1));
+  };
+
+  const handleNextKomoditas = () => {
+    setKomoditasIndex((prev) => (prev < KOMODITAS_LIST.length - 1 ? prev + 1 : 0));
+  };
+
+  const handleTampilkan = () => {
+    setIsLoading(true);
+    setTimeout(() => {
+      setIsLoading(false);
+      showToast('Data rekonsiliasi berhasil dimuat dan disinkronkan.');
+    }, 400);
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Add / Edit Respondent handlers
+  const handleOpenAddRespondent = (defaultTahun?: number, defaultTw?: number) => {
+    if (!currentUser.isOwner) {
+      alert('Akses khusus Admin Provinsi (harga6100@gmail.com).');
+      return;
+    }
+    setRespondentForm({
+      isOpen: true,
+      initialData: null,
+      defaultTahun: defaultTahun || 2026,
+      defaultTriwulan: defaultTw || 3
+    });
+  };
+
+  const handleOpenEditRespondent = (item: RespondenData) => {
+    if (!currentUser.isOwner) {
+      alert('Akses khusus Admin Provinsi (harga6100@gmail.com).');
+      return;
+    }
+    setRespondentForm({
+      isOpen: true,
+      initialData: item,
+      defaultTahun: item.tahun,
+      defaultTriwulan: item.triwulan
+    });
+  };
+
+  const handleSaveRespondent = (respData: Omit<RespondenData, 'id'> & { id?: string }) => {
+    if (!detailModalKab) return;
+
+    let updatedRespondents: RespondenData[];
+    if (respData.id) {
+      updatedRespondents = detailModalKab.respondents.map((r) =>
+        r.id === respData.id ? ({ ...r, ...respData } as RespondenData) : r
+      );
+      showToast(`Data responden ${respData.nama} berhasil diperbarui.`);
+    } else {
+      const newEntry: RespondenData = {
+        id: `res_${Date.now()}`,
+        ...respData
+      };
+      updatedRespondents = [...detailModalKab.respondents, newEntry];
+      showToast(`Responden ${respData.nama} berhasil ditambahkan.`);
+    }
+
+    const updatedKab = {
+      ...detailModalKab,
+      respondents: updatedRespondents
+    };
+    handleUpdateKabupaten(updatedKab);
+  };
+
+  const handleDeleteRespondent = (id: string) => {
+    if (!detailModalKab) return;
+    const updatedRespondents = detailModalKab.respondents.filter((r) => r.id !== id);
+    const updatedKab = {
+      ...detailModalKab,
+      respondents: updatedRespondents
+    };
+    handleUpdateKabupaten(updatedKab);
+    showToast('Data responden berhasil dihapus.');
+  };
+
+  // Note Modal Save
+  const handleSaveNote = (kabupatenId: string, noteText: string) => {
+    if (!currentUser.isLoggedIn) {
+      setIsAuthModalOpen(true);
+      return;
+    }
+    const kab = currentKabupatenData.find((k) => k.id === kabupatenId);
+    if (kab) {
+      handleUpdateKabupaten({
+        ...kab,
+        catatan: noteText
+      });
+      showToast(`Catatan untuk ${kab.nama} berhasil disimpan ke server.`);
+    }
+  };
+
+  // Excel exports
+  const handleExportExcelTable = () => {
+    exportCurrentTableToExcel(selectedProvinsi, selectedKomoditas, currentKabupatenData);
+    showToast('Tabel berhasil diekspor ke file Excel (.xlsx).');
+  };
+
+  const handleExportSeluruhKualitas = () => {
+    exportSeluruhKualitasToExcel(selectedProvinsi, KOMODITAS_LIST, database);
+    showToast('Seluruh data harga dari 89 kualitas/komoditas berhasil diekspor ke Excel (.xlsx).');
+  };
+
+  const handleExportSeluruhResponden = () => {
+    exportSeluruhRespondenToExcel(selectedProvinsi, KOMODITAS_LIST, database);
+    showToast('Seluruh data responden dari 89 kualitas/komoditas berhasil diekspor ke Excel (.xlsx).');
+  };
+
+  // Sync active detail modal
+  const activeDetailKab = detailModalKab
+    ? currentKabupatenData.find((k) => k.id === detailModalKab.id || k.kode === detailModalKab.kode) || detailModalKab
+    : null;
+
+  const anomalyCount = currentKabupatenData.filter(
+    (d) => d.koefisienVariasi > 20 || (d.harga2026 > 0 && (d.rasio > 120 || d.rasio < 80))
+  ).length;
+
+  // If Landing Login is requested or active
+  if (showLandingLogin) {
+    return (
+      <LoginLandingPage
+        currentUser={currentUser}
+        onLoginOwner={handleLoginOwner}
+        onLoginKabupaten={handleLoginKabupaten}
+        onEnterAsGuest={handleEnterAsGuest}
+        onClose={currentUser.isLoggedIn ? () => setShowLandingLogin(false) : undefined}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans antialiased">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-80 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xl border border-slate-700 flex items-center gap-2 animate-in slide-in-from-bottom-3 duration-200">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Fixed Uncollapsed Sidebar (Desktop: always visible, Mobile: toggled drawer) */}
+      <Sidebar
+        activeView={activeView}
+        onSelectView={(v) => {
+          if (currentUser.role === 'kabupaten' && v === 'rekon_daerah') {
+            showToast(`Perhatian: Akun Admin Kab/Kota [${currentUser.kabupatenKode}] berfokus pada penyelesaian Tabel Anomali Rekon.`);
+          }
+          setActiveView(v);
+          setIsMobileSidebarOpen(false);
+        }}
+        anomalyCount={anomalyCount}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        onOpenLandingLogin={() => setShowLandingLogin(true)}
+        onOpenUpload={() => setIsUploadModalOpen(true)}
+        onOpenDisplayAdjust={() => setIsDisplayAdjustOpen(true)}
+        onOpenUserManagement={() => setIsUserManagementOpen(true)}
+        onOpenLkSewaAlat={() => handleOpenLkModal()}
+        onDownloadSeluruhKualitas={handleExportSeluruhKualitas}
+        onDownloadSeluruhResponden={handleExportSeluruhResponden}
+        onLogout={handleLogout}
+        isMobileOpen={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+      />
+
+      {/* Main Content Layout with desktop left padding for fixed sidebar */}
+      <div className="lg:pl-64 flex flex-col flex-1 min-h-screen">
+        {/* Top Header - Mobile only, desktop is hidden because all controls are in fixed Sidebar */}
+        <div className="lg:hidden">
+          <HeaderNav
+            onRefresh={handleTampilkan}
+            onPrint={handlePrint}
+            isRefreshing={isLoading}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
+            onOpenLandingLogin={() => setShowLandingLogin(true)}
+            onOpenUpload={() => setIsUploadModalOpen(true)}
+            onOpenDisplayAdjust={() => setIsDisplayAdjustOpen(true)}
+            onOpenUserManagement={() => setIsUserManagementOpen(true)}
+            onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
+            activeView={activeView}
+            onSelectView={(v) => {
+              if (currentUser.role === 'kabupaten' && v === 'rekon_daerah') {
+                showToast(`Perhatian: Akun Admin Kab/Kota [${currentUser.kabupatenKode}] berfokus pada penyelesaian Tabel Anomali Rekon.`);
+              }
+              setActiveView(v);
+            }}
+            anomalyCount={anomalyCount}
+          />
+        </div>
+
+        {/* Main Container with responsive scaling and width adjust */}
+        <main
+          className={`flex-1 w-full ${
+            displaySettings.width === 'full' ? 'max-w-none px-2 sm:px-4 lg:px-6' : 'max-w-7xl mx-auto px-2 sm:px-4 lg:px-6'
+          } ${
+            displaySettings.scale === 'small'
+              ? 'text-[92%]'
+              : displaySettings.scale === 'large'
+              ? 'text-[108%]'
+              : 'text-[100%]'
+          } py-3 sm:py-4 transition-all duration-150`}
+        >
+        {/* View Switcher: Rekon Daerah vs Tabel Anomali Rekon */}
+        {activeView === 'rekon_daerah' ? (
+          <>
+            {/* Filter & Banner Section */}
+            <FilterSection
+              provinsiList={PROVINSI_LIST}
+              selectedProvinsi={selectedProvinsi}
+              onSelectProvinsi={(prov) => {
+                setSelectedProvinsi(prov);
+                setSelectedKabupatenId(null);
+              }}
+              komoditasList={KOMODITAS_LIST}
+              selectedKomoditas={selectedKomoditas}
+              onSelectKomoditas={(kom) => {
+                const idx = KOMODITAS_LIST.findIndex((k) => k.kode === kom.kode);
+                if (idx >= 0) setKomoditasIndex(idx);
+              }}
+              currentIndex={komoditasIndex}
+              totalKomoditas={KOMODITAS_LIST.length}
+              onPrevKomoditas={handlePrevKomoditas}
+              onNextKomoditas={handleNextKomoditas}
+              onTampilkan={handleTampilkan}
+              isLoading={isLoading}
+              onDownloadSeluruhKualitas={handleExportSeluruhKualitas}
+              onDownloadSeluruhResponden={handleExportSeluruhResponden}
+              data={currentKabupatenData}
+            />
+
+            {/* Main Data Table with Responsive Scroll & Density */}
+            <RekonTable
+              data={currentKabupatenData}
+              selectedKomoditas={selectedKomoditas}
+              dbKey={currentKey}
+              density={displaySettings.density}
+              onOpenDetail={(item) => {
+                setDetailModalKab(item);
+                setSelectedKabupatenId(item.id);
+              }}
+              onOpenNote={(item) => {
+                if (!currentUser.isLoggedIn) {
+                  setIsAuthModalOpen(true);
+                  return;
+                }
+                setNoteModalKab(item);
+              }}
+              onExportExcel={handleExportExcelTable}
+              onPrint={handlePrint}
+              selectedId={selectedKabupatenId}
+              onSelectRow={(item) => setSelectedKabupatenId(item.id)}
+              onSortedDataChange={(sorted) => setChartSortedData(sorted)}
+              onOpenLkSewaAlat={(kab) => handleOpenLkModal(selectedKomoditas.kode, kab.kode)}
+              onChangeTipeSewa={(kab, nextTipe) =>
+                handleChangeTipeSewa(currentKey, kab.kode, null, nextTipe)
+              }
+              currentUser={currentUser}
+            />
+
+            {/* Dynamic Bar Chart: Exactly synchronized with table sort order */}
+            <GrafikRekonda
+              data={chartSortedData.length > 0 ? chartSortedData : currentKabupatenData}
+              onSelectKabupaten={(item) => {
+                setSelectedKabupatenId(item.id);
+                setDetailModalKab(item);
+              }}
+              selectedId={selectedKabupatenId}
+            />
+          </>
+        ) : (
+          /* Tabel Anomali Rekon */
+          <AnomaliRekonTable
+            database={database}
+            density={displaySettings.density}
+            komoditasList={KOMODITAS_LIST}
+            provinsi={selectedProvinsi}
+            selectedKomoditas={selectedKomoditas}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
+            onUpdateAnomali={handleUpdateAnomali}
+            onOpenLkSewaAlat={(komKode, kabKode) => handleOpenLkModal(komKode, kabKode)}
+            onChangeTipeSewa={(targetDbKey, kabKode, nextTipe) =>
+              handleChangeTipeSewa(targetDbKey, kabKode, null, nextTipe)
+            }
+            onOpenDetail={(kab, kom) => {
+              const idx = KOMODITAS_LIST.findIndex((k) => k.kode === kom.kode);
+              if (idx >= 0) setKomoditasIndex(idx);
+              setDetailModalKab(kab);
+              setSelectedKabupatenId(kab.id);
+            }}
+          />
+        )}
+      </main>
+
+
+      {/* Footer */}
+      <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 text-[11px] py-3.5 print:hidden">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div>
+            <span>REKONDA 2026/2027 · Sistem Rekonsiliasi Data IKK Lintas Tahun</span>
+          </div>
+          <div className="flex items-center gap-3 text-slate-400">
+            <span>Standar Indeks Kemahalan Konstruksi (IKK)</span>
+            <span>·</span>
+            <span>Server Sync Active</span>
+          </div>
+        </div>
+      </footer>
+      </div>
+
+      {/* Detail Rekonda Modal (Matching Screenshot 2 + Sorting on respondents + Per-Respondent Sewa Alat) */}
+      {activeDetailKab && (
+        <DetailModal
+          isOpen={Boolean(activeDetailKab)}
+          onClose={() => setDetailModalKab(null)}
+          kabupaten={activeDetailKab}
+          komoditas={selectedKomoditas}
+          onUpdateKabupaten={handleUpdateKabupaten}
+          onOpenAddRespondent={handleOpenAddRespondent}
+          onOpenEditRespondent={handleOpenEditRespondent}
+          onDeleteRespondent={handleDeleteRespondent}
+          onChangeRespondentTipeSewa={(kabKode, respId, nextTipe) =>
+            handleChangeTipeSewa(currentKey, kabKode, respId, nextTipe)
+          }
+          onBatchChangeAllRespondentsTipeSewa={(kabKode, nextTipe) =>
+            handleChangeTipeSewa(currentKey, kabKode, null, nextTipe)
+          }
+          onOpenLkForRespondent={(komKode, kabKode, respId) =>
+            handleOpenLkModal(komKode, kabKode, respId)
+          }
+          currentUser={currentUser}
+          onOpenAuth={() => setIsAuthModalOpen(true)}
+        />
+      )}
+
+      {/* Add / Edit Respondent Form Modal */}
+      <RespondentFormModal
+        isOpen={respondentForm.isOpen}
+        onClose={() => setRespondentForm((prev) => ({ ...prev, isOpen: false }))}
+        onSave={handleSaveRespondent}
+        initialData={respondentForm.initialData}
+        defaultTahun={respondentForm.defaultTahun}
+        defaultTriwulan={respondentForm.defaultTriwulan}
+        kabupatenNama={detailModalKab ? `[${detailModalKab.kode}] ${detailModalKab.nama}` : ''}
+      />
+
+      {/* Note Quick Viewer & Editor Modal */}
+      {noteModalKab && (
+        <NotePreviewModal
+          isOpen={Boolean(noteModalKab)}
+          onClose={() => setNoteModalKab(null)}
+          kabupaten={noteModalKab}
+          onSaveNote={handleSaveNote}
+        />
+      )}
+
+      {/* Auth Modal (Google Login / Owner Verification) */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        currentUser={currentUser}
+        onOpenLandingLogin={() => {
+          setIsAuthModalOpen(false);
+          setShowLandingLogin(true);
+        }}
+        onLogout={handleLogout}
+      />
+
+      {/* Document Upload Modal (rekonda26 & tabel 7.1) */}
+      <UploadModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        currentData={currentKabupatenData}
+        onApplyData={handleApplyUploadedData}
+        selectedKomoditas={selectedKomoditas}
+        onQuickLoginAsOwner={() => handleLogin('harga6100@gmail.com', 'Admin Rekonda')}
+      />
+
+      {/* Display & Device Adjuster Modal */}
+      <DisplayAdjustModal
+        isOpen={isDisplayAdjustOpen}
+        onClose={() => setIsDisplayAdjustOpen(false)}
+        settings={displaySettings}
+        onUpdateSettings={handleUpdateDisplaySettings}
+        onResetSettings={handleResetDisplaySettings}
+      />
+
+      {/* User Management Modal (Tambah & Kelola Admin Kab/Kota) */}
+      <UserManagementModal
+        isOpen={isUserManagementOpen}
+        onClose={() => setIsUserManagementOpen(false)}
+        onSuccessToast={showToast}
+        currentUser={currentUser}
+      />
+
+      {/* LK Penghitungan Sewa Alat Berat (Kode 5101 - 5803, Per-Responden, Khusus Admin Provinsi) */}
+      <LkSewaAlatModal
+        isOpen={lkModalState.isOpen}
+        onClose={() => setLkModalState((prev) => ({ ...prev, isOpen: false }))}
+        provinsi={selectedProvinsi}
+        komoditasList={KOMODITAS_LIST}
+        database={database}
+        initialKomoditasKode={lkModalState.komoditasKode}
+        initialKabupatenKode={lkModalState.kabupatenKode}
+        initialRespondentId={lkModalState.respondentId}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
+        onApplyLkResult={handleApplyLkResult}
+        onChangeTipeSewa={handleChangeTipeSewa}
+      />
+    </div>
+  );
+}
+

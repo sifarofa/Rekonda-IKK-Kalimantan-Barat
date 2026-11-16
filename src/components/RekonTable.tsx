@@ -1,0 +1,781 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+  FileSpreadsheet,
+  Printer,
+  Search,
+  Eye,
+  MessageSquare,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  CheckCircle2,
+  ChevronRight,
+  Calculator
+} from 'lucide-react';
+import { KabupatenRekon, Komoditas, TipeSewaAlat, UserAuth, DisplayDensity } from '../types/rekonda';
+import { formatRupiahNumber, formatPercent } from '../utils/formatters';
+import { isSewaAlatKomoditas, getSewaAlatKabStatus } from '../utils/sewaAlatCalculator';
+
+interface RekonTableProps {
+  data: KabupatenRekon[];
+  selectedKomoditas?: Komoditas;
+  dbKey?: string;
+  onOpenDetail: (item: KabupatenRekon) => void;
+  onOpenNote: (item: KabupatenRekon) => void;
+  onExportExcel: () => void;
+  onPrint: () => void;
+  selectedId?: string | null;
+  onSelectRow?: (item: KabupatenRekon) => void;
+  onSortedDataChange?: (sortedList: KabupatenRekon[]) => void;
+  onOpenLkSewaAlat?: (item: KabupatenRekon) => void;
+  onChangeTipeSewa?: (item: KabupatenRekon, nextTipe: TipeSewaAlat) => void;
+  currentUser: UserAuth;
+  density?: DisplayDensity;
+}
+
+export type SortField =
+  | 'kode'
+  | 'nama'
+  | 'harga2027'
+  | 'hargaTw3_2026'
+  | 'hargaTw4_2026'
+  | 'hargaTw1_2027'
+  | 'hargaTw2_2027'
+  | 'koefisienVariasi'
+  | 'namaKualitas'
+  | 'harga2026'
+  | 'rasio'
+  | 'catatan';
+
+export const RekonTable: React.FC<RekonTableProps> = ({
+  data,
+  selectedKomoditas,
+  onOpenDetail,
+  onOpenNote,
+  onExportExcel,
+  onPrint,
+  selectedId,
+  onSelectRow,
+  onSortedDataChange,
+  onOpenLkSewaAlat,
+  onChangeTipeSewa,
+  currentUser,
+  density = 'normal'
+}) => {
+  const isSewaAlat = isSewaAlatKomoditas(selectedKomoditas?.kode || '');
+  const isPemilik = currentUser.role === 'pemilik' || currentUser.isOwner;
+  const [searchTerm, setSearchTerm] = useState('');
+  const [entriesPerPage, setEntriesPerPage] = useState<number>(15);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [sortField, setSortField] = useState<SortField>('kode');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // Handle Sort
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Filter & Sort Data
+  const sortedAndFilteredData = useMemo(() => {
+    let result = [...data];
+    if (searchTerm.trim() !== '') {
+      const q = searchTerm.toLowerCase().trim();
+      result = result.filter(
+        (item) =>
+          item.nama.toLowerCase().includes(q) ||
+          item.kode.includes(q) ||
+          item.namaKualitas.toLowerCase().includes(q) ||
+          (item.catatan && item.catatan.toLowerCase().includes(q))
+      );
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      if (sortField === 'kode') {
+        const aNum = Number(a.kode) || 0;
+        const bNum = Number(b.kode) || 0;
+        return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+      }
+
+      let aVal = a[sortField];
+      let bVal = b[sortField];
+
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        return sortDirection === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      aVal = Number(aVal) || 0;
+      bVal = Number(bVal) || 0;
+      return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+
+    return result;
+  }, [data, searchTerm, sortField, sortDirection]);
+
+  // Synchronize sorted data to parent for chart dynamic ordering
+  useEffect(() => {
+    if (onSortedDataChange) {
+      onSortedDataChange(sortedAndFilteredData);
+    }
+  }, [sortedAndFilteredData, onSortedDataChange]);
+
+  // Pagination
+  const totalEntries = sortedAndFilteredData.length;
+  const totalPages = Math.ceil(totalEntries / (entriesPerPage || 15)) || 1;
+  const startIndex = (currentPage - 1) * entriesPerPage;
+  const endIndex = Math.min(startIndex + entriesPerPage, totalEntries);
+  const currentRows = sortedAndFilteredData.slice(startIndex, endIndex);
+
+  // Render Sort Icon
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="w-2.5 h-2.5 text-slate-400 group-hover:text-slate-600 inline ml-0.5" />;
+    }
+    return sortDirection === 'asc' ? (
+      <ArrowUp className="w-3 h-3 text-rose-600 inline ml-0.5" />
+    ) : (
+      <ArrowDown className="w-3 h-3 text-rose-600 inline ml-0.5" />
+    );
+  };
+
+  // Density styles calculation
+  const rowPaddingY = density === 'compact' ? 'py-1.5' : density === 'comfortable' ? 'py-3' : 'py-2';
+  const rowPaddingX = density === 'compact' ? 'px-1' : density === 'comfortable' ? 'px-2' : 'px-1.5';
+  const tableFontSize = density === 'compact' ? 'text-[10.5px]' : density === 'comfortable' ? 'text-xs' : 'text-[11px]';
+
+  const sewaSummary = useMemo(() => {
+    if (!isSewaAlat) return null;
+    let kabAllPure = 0;
+    let kabWaitingLk = 0;
+    let kabBelumKonf = 0;
+    let totalResp = 0;
+    let pureResp = 0;
+    let waitingLkResp = 0;
+    let belumKonfResp = 0;
+
+    for (const d of data) {
+      const st = getSewaAlatKabStatus(d);
+      if (st.allPure) kabAllPure++;
+      else if (st.waitingLkCount > 0) kabWaitingLk++;
+      else kabBelumKonf++;
+
+      totalResp += st.total;
+      pureResp += st.pureCount;
+      waitingLkResp += st.waitingLkCount;
+      belumKonfResp += st.belumKonfCount;
+    }
+
+    return {
+      kabAllPure,
+      kabWaitingLk,
+      kabBelumKonf,
+      totalResp,
+      pureResp,
+      waitingLkResp,
+      belumKonfResp
+    };
+  }, [data, isSewaAlat]);
+
+  return (
+    <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-3 sm:p-4 mb-6 w-full overflow-hidden">
+      {/* Sewa Alat Confirmation & LK Banner (Codes 5101 - 5803) */}
+      {isSewaAlat && sewaSummary && (
+        <div className="mb-3 bg-amber-50/90 border border-amber-300 rounded-xl px-3.5 py-2.5 flex flex-col md:flex-row md:items-center justify-between gap-2.5 text-xs">
+          <div className="flex items-start gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 mt-0.5">
+              <Calculator className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-bold text-amber-950 flex flex-wrap items-center gap-1.5">
+                <span>Konfirmasi Sewa Alat per Responden [{selectedKomoditas?.kode}]</span>
+                <span className="text-[10px] font-mono bg-emerald-100 border border-emerald-300 px-1.5 py-0.2 rounded text-emerald-900">
+                  Kab Siap Murni: {sewaSummary.kabAllPure}/{data.length}
+                </span>
+                {sewaSummary.totalResp > 0 && (
+                  <span className="text-[10px] font-mono bg-white border border-amber-300 px-1.5 py-0.2 rounded text-slate-800">
+                    Responden Murni: {sewaSummary.pureResp}/{sewaSummary.totalResp}
+                  </span>
+                )}
+                {sewaSummary.waitingLkResp > 0 && (
+                  <span className="text-[10px] font-mono bg-rose-100 border border-rose-300 px-1.5 py-0.2 rounded text-rose-900">
+                    Menunggu LK: {sewaSummary.waitingLkResp} resp
+                  </span>
+                )}
+                {sewaSummary.belumKonfResp > 0 && (
+                  <span className="text-[10px] font-mono bg-slate-100 border border-slate-300 px-1.5 py-0.2 rounded text-slate-700">
+                    Belum Konf: {sewaSummary.belumKonfResp} resp
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-amber-900 mt-0.5">
+                {isPemilik ? (
+                  <>
+                    Dalam 1 kab/kota bisa terdapat responden campuran (<strong>Sewa Murni</strong> &amp; <strong>All-In</strong>). Klik <strong>Detail Responden</strong> untuk konfirmasi per responden, lalu hitung responden <strong>All-In</strong> di <strong>LK Sewa Alat</strong>. Jika semua responden sudah murni, harga utama terhitung otomatis.
+                  </>
+                ) : (
+                  <>
+                    Admin Kab/Kota dapat mengonfirmasi status <strong>Sewa Murni</strong> atau <strong>All-In</strong> <strong>per responden</strong> lewat tombol <strong>Detail Responden</strong> (ikon mata) pada wilayahnya. Penghitungan <strong>LK Sewa Alat</strong> dilakukan oleh Admin Provinsi.
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {isPemilik && onOpenLkSewaAlat && data.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                const target = data.find((d) => d.id === selectedId) || data[0];
+                onOpenLkSewaAlat(target);
+              }}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer shrink-0"
+            >
+              <Calculator className="w-3.5 h-3.5" />
+              <span>Buka LK Sewa Alat</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Table Toolbar (Excel, Cetak, Entries, Search) */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 mb-3 text-xs">
+        {/* Left: Excel & Cetak buttons */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onExportExcel}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-md shadow-2xs transition-colors cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Excel</span>
+          </button>
+          <button
+            type="button"
+            onClick={onPrint}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-md shadow-2xs transition-colors cursor-pointer"
+          >
+            <Printer className="w-3.5 h-3.5 text-sky-600" />
+            <span>Cetak</span>
+          </button>
+          <span className="text-[11px] text-slate-500 hidden md:inline ml-1">
+            Sortir: <strong className="text-slate-800">{sortField}</strong> ({sortDirection === 'asc' ? 'Naik' : 'Turun'})
+          </span>
+        </div>
+
+        {/* Right side: Entries & Search */}
+        <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 text-xs">
+          {/* Entries dropdown */}
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <span>tampilkan</span>
+            <select
+              value={entriesPerPage}
+              onChange={(e) => {
+                setEntriesPerPage(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="bg-white border border-slate-300 text-slate-800 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-rose-500 cursor-pointer"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
+            <span>entri</span>
+          </div>
+
+          {/* Search box */}
+          <div className="relative flex-1 sm:flex-initial">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
+              placeholder="Cari kab / merek..."
+              className="bg-white border border-slate-300 rounded-md pl-2.5 pr-7 py-1 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 w-full sm:w-44"
+            />
+            {searchTerm ? (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+              >
+                ✕
+              </button>
+            ) : (
+              <Search className="w-3 h-3 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Horizontal Scroll Indicator */}
+      <div className="sm:hidden text-[10px] text-slate-500 flex items-center justify-between pb-1 px-0.5">
+        <span>* Kolom Kabupaten tersemat di kiri</span>
+        <span className="flex items-center gap-0.5 font-medium text-sky-700">
+          Geser ke kanan <ChevronRight className="w-3 h-3 inline" />
+        </span>
+      </div>
+
+      {/* Main Table: Responsive Scrollable Grid with Sticky First Column */}
+      <div className="w-full overflow-x-auto border border-slate-200 rounded-lg shadow-2xs">
+        <table className={`w-full min-w-[940px] lg:min-w-full table-fixed ${tableFontSize} leading-tight border-collapse`}>
+          <thead>
+            <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 select-none text-center">
+              {/* 1. Kabupaten (~14%) Sticky Left */}
+              <th
+                onClick={() => handleSort('kode')}
+                className="py-2.5 px-2 text-left cursor-pointer hover:bg-slate-200 transition-colors w-[140px] sm:w-[14%] group sticky left-0 bg-slate-100 z-20 border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.06)]"
+                title="Klik untuk sortir Kode Kabupaten"
+              >
+                <div className="flex items-center gap-0.5 truncate">
+                  <span>Kode & Kabupaten</span>
+                  {renderSortIcon('kode')}
+                </div>
+              </th>
+
+              {/* 2. Harga 2027 (~10%) */}
+              <th
+                onClick={() => handleSort('harga2027')}
+                className="py-2.5 px-1.5 text-right cursor-pointer hover:bg-rose-100/70 bg-rose-50/60 transition-colors w-[95px] sm:w-[10%] group"
+                title="Rata-rata tahun berjalan (TW III/IV 2026 & TW I/II 2027 yang tersedia)"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span className="text-rose-900 font-extrabold">Harga 2027</span>
+                  {renderSortIcon('harga2027')}
+                </div>
+              </th>
+
+              {/* 3. TW III 2026 (~7.5%) */}
+              <th
+                onClick={() => handleSort('hargaTw3_2026')}
+                className="py-2.5 px-1 text-right cursor-pointer hover:bg-slate-200 transition-colors w-[75px] sm:w-[7.5%] group"
+                title="Harga TW III 2026"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span>TW III '26</span>
+                  {renderSortIcon('hargaTw3_2026')}
+                </div>
+              </th>
+
+              {/* 4. TW IV 2026 (~7.5%) */}
+              <th
+                onClick={() => handleSort('hargaTw4_2026')}
+                className="py-2.5 px-1 text-right cursor-pointer hover:bg-slate-200 transition-colors w-[75px] sm:w-[7.5%] group"
+                title="Harga TW IV 2026"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span>TW IV '26</span>
+                  {renderSortIcon('hargaTw4_2026')}
+                </div>
+              </th>
+
+              {/* 5. TW I 2027 (~7.5%) */}
+              <th
+                onClick={() => handleSort('hargaTw1_2027')}
+                className="py-2.5 px-1 text-right cursor-pointer hover:bg-slate-200 transition-colors w-[75px] sm:w-[7.5%] group"
+                title="Harga TW I 2027"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span>TW I '27</span>
+                  {renderSortIcon('hargaTw1_2027')}
+                </div>
+              </th>
+
+              {/* 6. TW II 2027 (~7.5%) */}
+              <th
+                onClick={() => handleSort('hargaTw2_2027')}
+                className="py-2.5 px-1 text-right cursor-pointer hover:bg-slate-200 transition-colors w-[75px] sm:w-[7.5%] group"
+                title="Harga TW II 2027"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span>TW II '27</span>
+                  {renderSortIcon('hargaTw2_2027')}
+                </div>
+              </th>
+
+              {/* 7. Koefisien Variasi (~6.5%) */}
+              <th
+                onClick={() => handleSort('koefisienVariasi')}
+                className="py-2.5 px-1 text-right cursor-pointer hover:bg-slate-200 transition-colors w-[65px] sm:w-[6.5%] group"
+                title="Koefisien Variasi (%) variasi harga antar responden di kab/kota bersangkutan"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span>CV (%)</span>
+                  {renderSortIcon('koefisienVariasi')}
+                </div>
+              </th>
+
+              {/* 8. Nama Kualitas/Merek (Mode) (~12%) */}
+              <th
+                onClick={() => handleSort('namaKualitas')}
+                className="py-2.5 px-2 text-left cursor-pointer hover:bg-slate-200 transition-colors w-[110px] sm:w-[12%] group"
+                title="Merek yang paling sering muncul dari responden di kabupaten bersangkutan"
+              >
+                <div className="flex items-center gap-0.5 truncate">
+                  <span>Merek Terbanyak</span>
+                  {renderSortIcon('namaKualitas')}
+                </div>
+              </th>
+
+              {/* 9. Harga 2026 (~8.5%) */}
+              <th
+                onClick={() => handleSort('harga2026')}
+                className="py-2.5 px-1 text-right cursor-pointer hover:bg-slate-200 transition-colors w-[85px] sm:w-[8.5%] group"
+                title="Harga Tahun Lalu (Rata-rata dari database sheet rekonda26)"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span>Harga 2026</span>
+                  {renderSortIcon('harga2026')}
+                </div>
+              </th>
+
+              {/* 10. Rasio (~6%) */}
+              <th
+                onClick={() => handleSort('rasio')}
+                className="py-2.5 px-1 text-right cursor-pointer hover:bg-slate-200 transition-colors w-[60px] sm:w-[6%] group"
+                title="Rasio perbandingan harga 2027 terhadap harga 2026"
+              >
+                <div className="flex items-center justify-end gap-0.5">
+                  <span>Rasio</span>
+                  {renderSortIcon('rasio')}
+                </div>
+              </th>
+
+              {/* 11. Catatan (Sebelum Kolom Aksi) (~5%) */}
+              <th
+                onClick={() => handleSort('catatan')}
+                className="py-2.5 px-1 text-center cursor-pointer hover:bg-slate-200 transition-colors w-[55px] sm:w-[5%] group"
+                title="Catatan Lapangan & Justifikasi"
+              >
+                <div className="flex items-center justify-center gap-0.5">
+                  <span>Catatan</span>
+                  {renderSortIcon('catatan')}
+                </div>
+              </th>
+
+              {/* 12. Aksi (~7% with View Wilayah + Detail icons) */}
+              <th className="py-2.5 px-1 text-center w-[60px] sm:w-[7%]">
+                Aksi
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {currentRows.length === 0 ? (
+              <tr>
+                <td colSpan={12} className="py-8 text-center text-slate-500 font-medium">
+                  Tidak ada data yang sesuai dengan pencarian &quot;{searchTerm}&quot;
+                </td>
+              </tr>
+            ) : (
+              currentRows.map((row, idx) => {
+                const isSelected = selectedId === row.id;
+                const isHighCV = row.koefisienVariasi > 20;
+                const hasNote = Boolean(row.catatan && row.catatan.trim().length > 0);
+                const sewaSt = isSewaAlat ? getSewaAlatKabStatus(row) : null;
+
+                return (
+                  <tr
+                    key={row.id}
+                    onClick={() => onSelectRow && onSelectRow(row)}
+                    className={`transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-rose-50/80 hover:bg-rose-100/70'
+                        : idx % 2 === 0
+                        ? 'bg-white hover:bg-slate-50/80'
+                        : 'bg-slate-50/40 hover:bg-slate-100/60'
+                    }`}
+                  >
+                    {/* 1. Kabupaten - STICKY LEFT */}
+                    <td
+                      className={`${rowPaddingY} ${rowPaddingX} font-medium text-slate-900 sticky left-0 z-10 border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.06)] ${
+                        isSelected ? 'bg-rose-50' : idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1 truncate" title={`[${row.kode}] ${row.nama}`}>
+                        <span className="font-mono text-slate-500 text-[10px]">[{row.kode}]</span>
+                        <span className="font-bold text-slate-800 truncate">{row.nama}</span>
+                        {row.isVerified && (
+                          <span title="Rekon Selesai / Terverifikasi">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600 inline shrink-0" />
+                          </span>
+                        )}
+                      </div>
+                      {isSewaAlat && onChangeTipeSewa && sewaSt && (
+                        <div
+                          className="mt-1 flex items-center gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <select
+                            disabled={!isPemilik && currentUser.kabupatenKode !== row.kode}
+                            value={row.tipeSewa || 'belum_konfirmasi'}
+                            onChange={(e) =>
+                              onChangeTipeSewa(row, e.target.value as TipeSewaAlat)
+                            }
+                            title="Konfirmasi cepat satu wilayah (atau klik tombol Resp untuk konfirmasi per responden)"
+                            className={`flex-1 min-w-0 text-[9.5px] font-bold rounded px-1 py-0.5 border transition-colors ${
+                              sewaSt.allPure
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-400'
+                                : sewaSt.waitingLkCount > 0 || row.tipeSewa === 'all_in'
+                                ? 'bg-amber-100 text-amber-950 border-amber-400'
+                                : 'bg-slate-100 text-slate-600 border-slate-300'
+                            } ${
+                              !isPemilik && currentUser.kabupatenKode !== row.kode
+                                ? 'opacity-65 cursor-not-allowed'
+                                : 'cursor-pointer'
+                            }`}
+                          >
+                            <option value="belum_konfirmasi">? Belum Konf.</option>
+                            <option value="sewa_murni">✓ Semua Murni</option>
+                            <option value="all_in">
+                              {isPemilik ? '⚙ Semua All-In (LK)' : '⚙ Semua All-In'}
+                            </option>
+                          </select>
+                          {sewaSt.total > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenDetail(row)}
+                              title={`Konfirmasi per responden (${sewaSt.pureCount}/${sewaSt.total} responden sudah sewa murni)`}
+                              className={`shrink-0 text-[9px] font-mono font-bold px-1 py-0.5 rounded border cursor-pointer transition-colors ${
+                                sewaSt.allPure
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                                  : sewaSt.waitingLkCount > 0
+                                  ? 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
+                                  : 'bg-sky-50 text-sky-800 border-sky-300 hover:bg-sky-100'
+                              }`}
+                            >
+                              {sewaSt.pureCount}/{sewaSt.total}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* 2. Harga 2027 (Rata-rata berjalan / Hasil Sewa Murni LK) */}
+                    <td
+                      className={`${rowPaddingY} ${rowPaddingX} text-right font-mono font-bold text-slate-900 bg-rose-50/30 tabular-nums`}
+                      title={
+                        sewaSt && sewaSt.total > 0
+                          ? sewaSt.allPure
+                            ? sewaSt.hasAnyLk
+                              ? `Seluruh ${sewaSt.total} responden sudah sewa murni (${sewaSt.allInComputedCount} via LK, ${sewaSt.murniCount} murni)`
+                              : `Seluruh ${sewaSt.total} responden berstatus Sewa Murni`
+                            : `Harga utama menunggu seluruh responden siap murni (${sewaSt.pureCount}/${sewaSt.total} siap; ${sewaSt.waitingLkCount} menunggu LK, ${sewaSt.belumKonfCount} belum konfirmasi)`
+                          : isSewaAlat && row.tipeSewa === 'all_in' && row.lkSewaAlat?.hargaAwalSebelumLk
+                          ? `Hasil Sewa Murni LK dari harga survei All-In Rp ${formatRupiahNumber(
+                              row.lkSewaAlat.hargaAwalSebelumLk
+                            )}`
+                          : undefined
+                      }
+                    >
+                      <div>{formatRupiahNumber(row.harga2027)}</div>
+                      {sewaSt && (
+                        sewaSt.total > 0 ? (
+                          sewaSt.allPure ? (
+                            sewaSt.hasAnyLk ? (
+                              <div className="text-[9px] font-sans font-extrabold text-amber-800 bg-amber-100 border border-amber-300 rounded px-1 inline-block mt-0.5">
+                                LK Murni ({sewaSt.allInComputedCount}/{sewaSt.total})
+                              </div>
+                            ) : (
+                              <div className="text-[9px] font-sans font-extrabold text-emerald-800 bg-emerald-100 border border-emerald-300 rounded px-1 inline-block mt-0.5">
+                                Semua Murni
+                              </div>
+                            )
+                          ) : sewaSt.waitingLkCount > 0 ? (
+                            <div className="text-[9px] font-sans font-bold text-rose-800 bg-rose-100 border border-rose-300 rounded px-1 inline-block mt-0.5">
+                              Menunggu LK ({sewaSt.waitingLkCount})
+                            </div>
+                          ) : (
+                            <div className="text-[9px] font-sans font-semibold text-slate-700 bg-slate-100 border border-slate-300 rounded px-1 inline-block mt-0.5">
+                              Konf. {sewaSt.pureCount}/{sewaSt.total}
+                            </div>
+                          )
+                        ) : (
+                          row.tipeSewa === 'all_in' && (
+                            row.lkSewaAlat && row.lkSewaAlat.hasilSewaMurniBulan > 0 ? (
+                              <div className="text-[9px] font-sans font-extrabold text-amber-800 bg-amber-100 border border-amber-300 rounded px-1 inline-block mt-0.5">
+                                LK Murni
+                              </div>
+                            ) : (
+                              <div className="text-[9px] font-sans font-bold text-rose-800 bg-rose-100 border border-rose-300 rounded px-1 inline-block mt-0.5">
+                                Menunggu LK
+                              </div>
+                            )
+                          )
+                        )
+                      )}
+                    </td>
+
+                    {/* 3. TW III 2026 */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono text-slate-700 tabular-nums`}>
+                      {row.hargaTw3_2026 > 0 ? formatRupiahNumber(row.hargaTw3_2026) : '-'}
+                    </td>
+
+                    {/* 4. TW IV 2026 */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono text-slate-700 tabular-nums`}>
+                      {row.hargaTw4_2026 > 0 ? formatRupiahNumber(row.hargaTw4_2026) : '-'}
+                    </td>
+
+                    {/* 5. TW I 2027 */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono text-slate-600 tabular-nums`}>
+                      {row.hargaTw1_2027 > 0 ? formatRupiahNumber(row.hargaTw1_2027) : '-'}
+                    </td>
+
+                    {/* 6. TW II 2027 */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono text-slate-600 tabular-nums`}>
+                      {row.hargaTw2_2027 > 0 ? formatRupiahNumber(row.hargaTw2_2027) : '-'}
+                    </td>
+
+                    {/* 7. Koefisien Variasi */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono tabular-nums`}>
+                      <span
+                        className={`font-semibold ${
+                          isHighCV
+                            ? 'text-amber-800 bg-amber-100 px-1 py-0.5 rounded text-[10px]'
+                            : row.koefisienVariasi === 0
+                            ? 'text-slate-400'
+                            : 'text-slate-800'
+                        }`}
+                        title={`Variasi harga antar responden: ${formatPercent(row.koefisienVariasi)}%`}
+                      >
+                        {formatPercent(row.koefisienVariasi)}%
+                      </span>
+                    </td>
+
+                    {/* 8. Nama Kualitas / Merek Dominan */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-slate-700 truncate`} title={`Merek paling banyak muncul: ${row.namaKualitas}`}>
+                      <span className="truncate block font-medium text-slate-800">
+                        {row.namaKualitas || 'Standar'}
+                      </span>
+                    </td>
+
+                    {/* 9. Harga 2026 (Tahun Lalu) */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono text-slate-600 tabular-nums`}>
+                      {row.harga2026 > 0 ? formatRupiahNumber(row.harga2026) : '-'}
+                    </td>
+
+                    {/* 10. Rasio */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-right font-mono tabular-nums`}>
+                      {row.harga2026 > 0 ? (
+                        <span
+                          className={`font-bold ${
+                            row.rasio > 120
+                              ? 'text-rose-700'
+                              : row.rasio < 80
+                              ? 'text-emerald-700'
+                              : 'text-slate-800'
+                          }`}
+                        >
+                          {formatPercent(row.rasio)}%
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 font-mono" title="Data 2026 tidak dicacah">-</span>
+                      )}
+                    </td>
+
+                    {/* 11. Catatan (Terintegrasi dari Detail Rekonda) */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-center`}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenDetail(row);
+                        }}
+                        title={row.catatan ? `Catatan: ${row.catatan} (Klik untuk lihat/edit di Detail Rekonda)` : 'Belum ada catatan (Klik untuk buka Detail Rekonda)'}
+                        className={`inline-flex items-center justify-center w-5 h-5 rounded-full transition-all cursor-pointer ${
+                          hasNote
+                            ? 'bg-sky-600 hover:bg-sky-700 text-white shadow-2xs'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-600'
+                        }`}
+                      >
+                        <MessageSquare className="w-2.5 h-2.5" />
+                      </button>
+                    </td>
+
+                    {/* 12. Aksi: LK Sewa Alat (Admin Provinsi) + Detail Rekonda Komoditas */}
+                    <td className={`${rowPaddingY} ${rowPaddingX} text-center`}>
+                      <div className="flex items-center justify-center gap-1">
+                        {isPemilik && isSewaAlat && onOpenLkSewaAlat && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenLkSewaAlat(row);
+                            }}
+                            title="Buka LK Penghitungan Sewa Alat Murni (Admin Provinsi)"
+                            className="inline-flex items-center justify-center w-6 h-6 rounded bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-2xs transition-colors cursor-pointer"
+                          >
+                            <Calculator className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenDetail(row);
+                          }}
+                          title="Buka Detail Harga Responden Kualitas Ini"
+                          className="inline-flex items-center justify-center w-6 h-6 rounded bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white shadow-2xs transition-colors cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination & Info */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-2 mt-3 text-xs text-slate-600">
+        <div>
+          Menampilkan <strong className="font-mono text-slate-900">{totalEntries === 0 ? 0 : startIndex + 1}</strong> s/d{' '}
+          <strong className="font-mono text-slate-900">{endIndex}</strong> dari{' '}
+          <strong className="font-mono text-slate-900">{totalEntries}</strong> entri
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            className="px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-medium transition-colors cursor-pointer"
+          >
+            Sebelumnya
+          </button>
+
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+            <button
+              key={pageNum}
+              type="button"
+              onClick={() => setCurrentPage(pageNum)}
+              className={`w-6 h-6 rounded text-[11px] font-mono font-semibold transition-colors cursor-pointer ${
+                currentPage === pageNum
+                  ? 'bg-sky-600 text-white'
+                  : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {pageNum}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            disabled={currentPage === totalPages || totalPages === 0}
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            className="px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-medium transition-colors cursor-pointer"
+          >
+            Selanjutnya
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
