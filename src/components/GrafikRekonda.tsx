@@ -94,12 +94,12 @@ export const GrafikRekonda: React.FC<GrafikRekondaProps> = ({
   const chartHeight = 250;
 
   return (
-    <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-5 mb-8 w-full overflow-hidden">
+    <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-3 sm:p-5 mb-8 w-full overflow-hidden">
       {/* Title & Summary */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-3 mb-4 pb-3 border-b border-slate-100">
         <div>
-          <h2 className="text-base font-bold text-slate-800 tracking-tight flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-sky-600" />
+          <h2 className="text-sm sm:text-base font-bold text-slate-800 tracking-tight flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-sky-600 shrink-0" />
             <span>Grafik Perbandingan Harga Rekonda per Kab/Kota</span>
           </h2>
           <p className="text-[11px] text-slate-500 mt-0.5">
@@ -108,12 +108,12 @@ export const GrafikRekonda: React.FC<GrafikRekondaProps> = ({
         </div>
 
         {/* Dynamic Price Legend */}
-        <div className="flex items-center gap-3 text-xs bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px] sm:text-xs bg-slate-50 border border-slate-200 px-2.5 sm:px-3 py-1.5 rounded-lg">
           <div className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-xs bg-[#0284c7]" />
-            <span className="font-semibold text-slate-700">Harga 2027 (Berjalan)</span>
+            <span className="font-semibold text-slate-700">Harga 2027</span>
           </div>
-          <div className="flex items-center gap-1.5 border-l border-slate-200 pl-3">
+          <div className="flex items-center gap-1.5 border-l border-slate-200 pl-2 sm:pl-3">
             <span className="w-3 border-b-2 border-dashed border-rose-500" />
             <span className="font-semibold text-rose-700">Rata-rata Prov: {formatRupiahNumber(avgPrice)}</span>
           </div>
@@ -122,166 +122,168 @@ export const GrafikRekonda: React.FC<GrafikRekondaProps> = ({
 
       {/* Main Chart Viewport */}
       <div className="relative pt-6 pb-1 overflow-x-auto">
-        {/* Hovered Info Tooltip Box */}
-        {hoveredKab && (
-          <div className="absolute top-0 left-1 right-1 sm:left-auto sm:right-4 z-20 bg-slate-900 text-white text-[11px] sm:text-xs px-3 py-2 rounded-lg shadow-xl flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 animate-in fade-in duration-150 border border-slate-700">
-            <div>
-              <span className="font-mono text-rose-300 font-bold">[{hoveredKab.kode}]</span>{' '}
-              <strong className="font-bold">{hoveredKab.nama}</strong>
-            </div>
-            <div className="border-l border-slate-700 pl-2 sm:pl-3 font-mono">
-              <span className="text-slate-400 text-[10px] block">Harga 2027:</span>
-              <strong className="text-sky-300 text-xs sm:text-sm">{formatRupiahCurrency(hoveredKab.harga2027)}</strong>
-            </div>
-            {hoveredKab.harga2026 > 0 && (
+        <div className="min-w-[540px] sm:min-w-0">
+          {/* Hovered Info Tooltip Box */}
+          {hoveredKab && (
+            <div className="absolute top-0 left-1 right-1 sm:left-auto sm:right-4 z-20 bg-slate-900 text-white text-[11px] sm:text-xs px-3 py-2 rounded-lg shadow-xl flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 animate-in fade-in duration-150 border border-slate-700">
+              <div>
+                <span className="font-mono text-rose-300 font-bold">[{hoveredKab.kode}]</span>{' '}
+                <strong className="font-bold">{hoveredKab.nama}</strong>
+              </div>
               <div className="border-l border-slate-700 pl-2 sm:pl-3 font-mono">
-                <span className="text-slate-400 text-[10px] block">Harga 2026:</span>
-                <span className="text-slate-200">{formatRupiahNumber(hoveredKab.harga2026)}</span>
+                <span className="text-slate-400 text-[10px] block">Harga 2027:</span>
+                <strong className="text-sky-300 text-xs sm:text-sm">{formatRupiahCurrency(hoveredKab.harga2027)}</strong>
               </div>
-            )}
-            <div className="border-l border-slate-700 pl-2 sm:pl-3 font-mono">
-              <span className="text-slate-400 text-[10px] block">Rasio / CV:</span>
-              <span
-                className={`font-bold ${
-                  hoveredKab.harga2026 > 0 && hoveredKab.rasio > 120
-                    ? 'text-rose-400'
-                    : hoveredKab.harga2026 > 0 && hoveredKab.rasio < 80
-                    ? 'text-emerald-400'
-                    : 'text-slate-300'
-                }`}
-              >
-                {formatPercent(hoveredKab.rasio)}%
-              </span>{' '}
-              <span className="text-slate-400">· CV {formatPercent(hoveredKab.koefisienVariasi)}%</span>
-            </div>
-            <div className="text-[10px] text-slate-400 border-l border-slate-700 pl-2 sm:pl-3 hidden sm:block">
-              Merek: <span className="text-slate-200">{hoveredKab.namaKualitas || 'Standar'}</span>
-            </div>
-          </div>
-        )}
-
-        <div className="flex">
-          {/* Dynamic Y-Axis Labels */}
-          <div
-            className="flex flex-col justify-between items-end pr-1.5 sm:pr-2 text-[9px] sm:text-[10px] font-mono text-slate-500 shrink-0 select-none w-14 sm:w-20"
-            style={{ height: `${chartHeight}px` }}
-          >
-
-            {yTicks
-              .slice()
-              .reverse()
-              .map((tick) => (
-                <span key={tick} className="tabular-nums font-semibold" title={`Rp ${formatRupiahNumber(tick)}`}>
-                  {formatCompactRupiah(tick)}
-                </span>
-              ))}
-          </div>
-
-          {/* Chart Bars Area */}
-          <div className="relative flex-1" style={{ height: `${chartHeight}px` }}>
-            {/* Horizontal Gridlines */}
-            <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
-              {yTicks.map((tick) => (
-                <div key={tick} className="border-b border-slate-100 w-full h-0" />
-              ))}
-            </div>
-
-            {/* Provincial Average Benchmark Line */}
-            {avgPrice > 0 && (
-              <div
-                className="absolute left-0 right-0 border-b-2 border-dashed border-rose-500 z-10 pointer-events-none transition-all"
-                style={{
-                  bottom: `${Math.min(100, (avgPrice / topScale) * 100)}%`
-                }}
-              >
-                <span className="absolute -top-3.5 right-2 text-[9px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 shadow-2xs">
-                  Rata-rata: {formatRupiahNumber(avgPrice)}
-                </span>
-              </div>
-            )}
-
-            {/* Bars Container */}
-            <div className="absolute inset-0 flex items-end justify-between gap-1 sm:gap-2 px-1 sm:px-2">
-              {data.map((item) => {
-                const val27 = item.harga2027;
-                const heightPercent27 = Math.min(100, Math.max(2, (val27 / topScale) * 100));
-                const isSelected = selectedId === item.id;
-                const isHovered = hoveredKab?.id === item.id;
-
-                return (
-                  <div
-                    key={item.id}
-                    className="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer relative"
-                    onMouseEnter={() => setHoveredKab(item)}
-                    onMouseLeave={() => setHoveredKab(null)}
-                    onClick={() => onSelectKabupaten(item)}
-                  >
-                    {/* Value Badge above bar */}
-                    {val27 > 0 && (
-                      <div
-                        className={`text-[9px] font-mono font-bold mb-1 transition-opacity whitespace-nowrap hidden lg:block ${
-                          isSelected
-                            ? 'text-rose-700 font-extrabold'
-                            : isHovered
-                            ? 'text-sky-700'
-                            : 'text-slate-500'
-                        }`}
-                      >
-                        {formatCompactRupiah(val27)}
-                      </div>
-                    )}
-
-                    {/* Bars Display */}
-                    <div className="w-full flex items-end justify-center h-full relative">
-                      {/* Main Bar: Harga 2027 */}
-                      <div
-                        className={`w-full max-w-[36px] rounded-t-xs transition-all duration-200 shadow-2xs ${
-                          isSelected
-                            ? 'bg-gradient-to-t from-rose-700 to-rose-500 ring-2 ring-rose-400 ring-offset-1'
-                            : isHovered
-                            ? 'bg-gradient-to-t from-sky-600 to-sky-400 scale-y-105 shadow-sm'
-                            : 'bg-gradient-to-t from-[#0284c7] to-[#38bdf8] hover:from-[#0369a1] hover:to-[#0ea5e9]'
-                        }`}
-                        style={{ height: `${heightPercent27}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* X-Axis Labels (Kabupaten Codes in exact sorted order) */}
-        <div className="flex ml-14 sm:ml-20 pr-1 sm:pr-2 justify-between gap-1 sm:gap-2 pt-2 border-t border-slate-200">
-          {data.map((item) => {
-            const isSelected = selectedId === item.id;
-            const isHovered = hoveredKab?.id === item.id;
-
-            return (
-              <div
-                key={item.id}
-                onClick={() => onSelectKabupaten(item)}
-                className="flex-1 text-center cursor-pointer group"
-              >
+              {hoveredKab.harga2026 > 0 && (
+                <div className="border-l border-slate-700 pl-2 sm:pl-3 font-mono">
+                  <span className="text-slate-400 text-[10px] block">Harga 2026:</span>
+                  <span className="text-slate-200">{formatRupiahNumber(hoveredKab.harga2026)}</span>
+                </div>
+              )}
+              <div className="border-l border-slate-700 pl-2 sm:pl-3 font-mono">
+                <span className="text-slate-400 text-[10px] block">Rasio / CV:</span>
                 <span
-                  className={`block font-mono text-[9px] sm:text-[10px] transition-colors ${
-                    isSelected
-                      ? 'font-bold text-rose-600 underline'
-                      : isHovered
-                      ? 'font-bold text-sky-600'
-                      : 'text-slate-700 group-hover:text-slate-900 font-semibold'
+                  className={`font-bold ${
+                    hoveredKab.harga2026 > 0 && hoveredKab.rasio > 120
+                      ? 'text-rose-400'
+                      : hoveredKab.harga2026 > 0 && hoveredKab.rasio < 80
+                      ? 'text-emerald-400'
+                      : 'text-slate-300'
                   }`}
-                  title={`${item.nama} (${item.kode})`}
                 >
-                  {item.kode}
-                </span>
-                <span className="hidden xl:block text-[8px] text-slate-400 truncate max-w-[42px] mx-auto">
-                  {item.nama}
-                </span>
+                  {formatPercent(hoveredKab.rasio)}%
+                </span>{' '}
+                <span className="text-slate-400">· CV {formatPercent(hoveredKab.koefisienVariasi)}%</span>
               </div>
-            );
-          })}
+              <div className="text-[10px] text-slate-400 border-l border-slate-700 pl-2 sm:pl-3 hidden sm:block">
+                Merek: <span className="text-slate-200">{hoveredKab.namaKualitas || 'Standar'}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex">
+            {/* Dynamic Y-Axis Labels */}
+            <div
+              className="flex flex-col justify-between items-end pr-1.5 sm:pr-2 text-[9px] sm:text-[10px] font-mono text-slate-500 shrink-0 select-none w-12 sm:w-20"
+              style={{ height: `${chartHeight}px` }}
+            >
+
+              {yTicks
+                .slice()
+                .reverse()
+                .map((tick) => (
+                  <span key={tick} className="tabular-nums font-semibold" title={`Rp ${formatRupiahNumber(tick)}`}>
+                    {formatCompactRupiah(tick)}
+                  </span>
+                ))}
+            </div>
+
+            {/* Chart Bars Area */}
+            <div className="relative flex-1" style={{ height: `${chartHeight}px` }}>
+              {/* Horizontal Gridlines */}
+              <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+                {yTicks.map((tick) => (
+                  <div key={tick} className="border-b border-slate-100 w-full h-0" />
+                ))}
+              </div>
+
+              {/* Provincial Average Benchmark Line */}
+              {avgPrice > 0 && (
+                <div
+                  className="absolute left-0 right-0 border-b-2 border-dashed border-rose-500 z-10 pointer-events-none transition-all"
+                  style={{
+                    bottom: `${Math.min(100, (avgPrice / topScale) * 100)}%`
+                  }}
+                >
+                  <span className="absolute -top-3.5 right-2 text-[9px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 shadow-2xs">
+                    Rata-rata: {formatRupiahNumber(avgPrice)}
+                  </span>
+                </div>
+              )}
+
+              {/* Bars Container */}
+              <div className="absolute inset-0 flex items-end justify-between gap-1 sm:gap-2 px-1 sm:px-2">
+                {data.map((item) => {
+                  const val27 = item.harga2027;
+                  const heightPercent27 = Math.min(100, Math.max(2, (val27 / topScale) * 100));
+                  const isSelected = selectedId === item.id;
+                  const isHovered = hoveredKab?.id === item.id;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer relative"
+                      onMouseEnter={() => setHoveredKab(item)}
+                      onMouseLeave={() => setHoveredKab(null)}
+                      onClick={() => onSelectKabupaten(item)}
+                    >
+                      {/* Value Badge above bar */}
+                      {val27 > 0 && (
+                        <div
+                          className={`text-[9px] font-mono font-bold mb-1 transition-opacity whitespace-nowrap hidden lg:block ${
+                            isSelected
+                              ? 'text-rose-700 font-extrabold'
+                              : isHovered
+                              ? 'text-sky-700'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {formatCompactRupiah(val27)}
+                        </div>
+                      )}
+
+                      {/* Bars Display */}
+                      <div className="w-full flex items-end justify-center h-full relative">
+                        {/* Main Bar: Harga 2027 */}
+                        <div
+                          className={`w-full max-w-[36px] rounded-t-xs transition-all duration-200 shadow-2xs ${
+                            isSelected
+                              ? 'bg-gradient-to-t from-rose-700 to-rose-500 ring-2 ring-rose-400 ring-offset-1'
+                              : isHovered
+                              ? 'bg-gradient-to-t from-sky-600 to-sky-400 scale-y-105 shadow-sm'
+                              : 'bg-gradient-to-t from-[#0284c7] to-[#38bdf8] hover:from-[#0369a1] hover:to-[#0ea5e9]'
+                          }`}
+                          style={{ height: `${heightPercent27}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* X-Axis Labels (Kabupaten Codes in exact sorted order) */}
+          <div className="flex ml-12 sm:ml-20 pr-1 sm:pr-2 justify-between gap-1 sm:gap-2 pt-2 border-t border-slate-200">
+            {data.map((item) => {
+              const isSelected = selectedId === item.id;
+              const isHovered = hoveredKab?.id === item.id;
+
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => onSelectKabupaten(item)}
+                  className="flex-1 text-center cursor-pointer group"
+                >
+                  <span
+                    className={`block font-mono text-[9px] sm:text-[10px] transition-colors ${
+                      isSelected
+                        ? 'font-bold text-rose-600 underline'
+                        : isHovered
+                        ? 'font-bold text-sky-600'
+                        : 'text-slate-700 group-hover:text-slate-900 font-semibold'
+                    }`}
+                    title={`${item.nama} (${item.kode})`}
+                  >
+                    {item.kode}
+                  </span>
+                  <span className="hidden xl:block text-[8px] text-slate-400 truncate max-w-[42px] mx-auto">
+                    {item.nama}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 

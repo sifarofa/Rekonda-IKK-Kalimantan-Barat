@@ -11,8 +11,7 @@ import {
   Lock,
   Layers,
   Sparkles,
-  RefreshCw,
-  Info
+  RefreshCw
 } from 'lucide-react';
 import { KabupatenRekon, Komoditas, UserAuth } from '../types/rekonda';
 import { formatRupiahNumber, formatPercent } from '../utils/formatters';
@@ -497,16 +496,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     Format tarikan Webentry dengan kode kualitas lengkap
                   </p>
                 </button>
-              </div>
-
-              {/* Cara Kerja Sinkron Gabungan */}
-              <div className="p-2.5 rounded-lg bg-white/90 border border-sky-200 text-[11px] text-slate-700 flex items-start gap-2">
-                <Info className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-slate-900">Cara Kerja Sinkron Gabungan (2 Langkah):</span>{' '}
-                  <strong>(1)</strong> Klik tombol <strong>Sinkron Gabungan (Rekonnas + Webentry)</strong> di bawah untuk menggabungkan kedua data resmi seluruh 89 komoditas ke dalam pratinjau.{' '}
-                  <strong>(2)</strong> Setelah pratinjau muncul, klik <strong>Terapkan ke Kolom Harga 2026</strong> di pojok kanan bawah untuk menyimpan hasil gabungan ke seluruh tabel Rekon Daerah &amp; Anomali.
-                </div>
               </div>
             </div>
           )}

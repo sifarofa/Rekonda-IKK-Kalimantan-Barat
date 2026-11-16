@@ -85,12 +85,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Fixed Uncollapsed Sidebar (Desktop: always visible, Mobile: slide in when toggled) */}
       <aside
-        className={`fixed left-0 top-0 bottom-0 w-64 bg-slate-900 border-r border-slate-800 text-white z-50 flex flex-col justify-between shadow-xl select-none transition-transform duration-200 ease-in-out ${
+        className={`fixed left-0 top-0 bottom-0 w-72 max-w-[85vw] lg:w-64 bg-slate-900 border-r border-slate-800 text-white z-50 flex flex-col justify-between shadow-xl select-none transition-transform duration-200 ease-in-out ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
         {/* Top Branding Section */}
-        <div>
+        <div className="flex flex-col flex-1 min-h-0">
           <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
             <div className="flex items-center gap-3">
               <button
@@ -173,7 +173,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Main Navigation Menu (Uncollapsed Fixed Sidebar) */}
-        <div className="p-3 space-y-4 overflow-y-auto max-h-[calc(100vh-280px)]">
+        <div className="p-3 space-y-4 overflow-y-auto flex-1 min-h-0">
           {/* Group 1: Modul Utama */}
           <div>
             <div className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
@@ -239,9 +239,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <TrendingUp className="w-4 h-4 shrink-0 text-sky-300" />
                   <div className="flex-1 truncate">
                     <div className="font-bold">Simulasi Ranking</div>
-                    <div className="text-[10px] opacity-80 font-normal truncate">
-                      What-If Harga &amp; Peringkat
-                    </div>
                   </div>
                 </button>
               )}
@@ -326,23 +323,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={handleUploadClick}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
-                  isPemilik
-                    ? 'text-slate-300 hover:text-white hover:bg-slate-800/80'
-                    : 'text-slate-500 hover:text-slate-400 hover:bg-slate-800/40'
-                }`}
-              >
-                <Upload className="w-4 h-4 shrink-0 text-emerald-400" />
-                <div className="flex-1 truncate">
-                  <div className="font-semibold text-slate-200">Upload Data &amp; Template</div>
-                  <div className="text-[10px] text-slate-400 truncate">
-                    {isPemilik ? 'Unggah Excel / CSV' : 'Khusus Admin Provinsi'}
+              {isPemilik && (
+                <button
+                  type="button"
+                  onClick={handleUploadClick}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 transition-colors text-left cursor-pointer"
+                >
+                  <Upload className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <div className="flex-1 truncate">
+                    <div className="font-semibold text-slate-200">Upload Data &amp; Template</div>
+                    <div className="text-[10px] text-slate-400 truncate">
+                      Unggah Excel / CSV
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              )}
 
               {isPemilik && onOpenGlobalSettings && (
                 <button

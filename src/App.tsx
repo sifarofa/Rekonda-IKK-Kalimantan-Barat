@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { HeaderNav } from './components/HeaderNav';
 import { FilterSection } from './components/FilterSection';
 import { RekonTable } from './components/RekonTable';
 import { GrafikRekonda } from './components/GrafikRekonda';
@@ -59,7 +58,7 @@ import {
   upsertRekondaSettingToSupabase
 } from './services/supabaseDocuments';
 import { hydrateRegisteredAdminsFromCloud } from './utils/userAdminStorage';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Menu, Database } from 'lucide-react';
 
 const AUTH_SESSION_KEY = 'rekonda_auth_session_v2';
 const DISPLAY_SESSION_KEY = 'rekonda_display_session_v1';
@@ -1452,10 +1451,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans antialiased">
+    <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans antialiased overflow-x-hidden">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-80 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xl border border-slate-700 flex items-center gap-2 animate-in slide-in-from-bottom-3 duration-200">
+        <div className="fixed bottom-4 right-4 left-4 sm:left-auto z-80 bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xl border border-slate-700 flex items-center gap-2 animate-in slide-in-from-bottom-3 duration-200">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
@@ -1483,67 +1482,85 @@ export default function App() {
         anomalyCount={anomalyCount}
         documentsCount={documents.length}
         currentUser={currentUser}
-        onOpenAuth={() => setIsAuthModalOpen(true)}
-        onOpenLandingLogin={() => setShowLandingLogin(true)}
-        onOpenUpload={() => setIsUploadModalOpen(true)}
-        onOpenDisplayAdjust={() => setIsDisplayAdjustOpen(true)}
+        onOpenAuth={() => {
+          setIsMobileSidebarOpen(false);
+          setIsAuthModalOpen(true);
+        }}
+        onOpenLandingLogin={() => {
+          setIsMobileSidebarOpen(false);
+          setShowLandingLogin(true);
+        }}
+        onOpenUpload={() => {
+          setIsMobileSidebarOpen(false);
+          setIsUploadModalOpen(true);
+        }}
+        onOpenDisplayAdjust={() => {
+          setIsMobileSidebarOpen(false);
+          setIsDisplayAdjustOpen(true);
+        }}
         onOpenGlobalSettings={() => {
           const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
           if (!isPemilik) {
             showToast('Akses terbatas: Menu Pengaturan Global khusus Admin Provinsi.');
             return;
           }
+          setIsMobileSidebarOpen(false);
           setIsGlobalSettingsOpen(true);
         }}
         globalSettings={globalSettings}
-        onOpenUserManagement={() => setIsUserManagementOpen(true)}
+        onOpenUserManagement={() => {
+          setIsMobileSidebarOpen(false);
+          setIsUserManagementOpen(true);
+        }}
         onOpenLkSewaAlat={() => handleOpenLkModal()}
-        onDownloadSeluruhKualitas={handleExportSeluruhKualitas}
-        onDownloadSeluruhResponden={handleExportSeluruhResponden}
-        onLogout={handleLogout}
+        onDownloadSeluruhKualitas={() => {
+          setIsMobileSidebarOpen(false);
+          handleExportSeluruhKualitas();
+        }}
+        onDownloadSeluruhResponden={() => {
+          setIsMobileSidebarOpen(false);
+          handleExportSeluruhResponden();
+        }}
+        onLogout={() => {
+          setIsMobileSidebarOpen(false);
+          handleLogout();
+        }}
         isMobileOpen={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
       />
 
       {/* Main Content Layout with desktop left padding for fixed sidebar */}
-      <div className="lg:pl-64 flex flex-col flex-1 min-h-screen">
-        {/* Top Header - Mobile only, desktop is hidden because all controls are in fixed Sidebar */}
-        <div className="lg:hidden">
-          <HeaderNav
-            onRefresh={handleTampilkan}
-            onPrint={handlePrint}
-            isRefreshing={isLoading}
-            currentUser={currentUser}
-            onOpenAuth={() => setIsAuthModalOpen(true)}
-            onOpenLandingLogin={() => setShowLandingLogin(true)}
-            onOpenUpload={() => setIsUploadModalOpen(true)}
-            onOpenDisplayAdjust={() => setIsDisplayAdjustOpen(true)}
-            onOpenUserManagement={() => setIsUserManagementOpen(true)}
-            onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
-            activeView={activeView}
-            onSelectView={(v) => {
-              const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
-              if (v === 'dokumen_arsip' && !isPemilik) {
-                showToast('Akses terbatas: Menu Dokumen & Arsip khusus Admin Provinsi.');
-                return;
-              }
-              if (v === 'simulasi_ranking' && !isPemilik) {
-                showToast('Akses terbatas: Menu Simulasi Ranking khusus Admin Provinsi.');
-                return;
-              }
-              if (currentUser.role === 'kabupaten' && v === 'rekon_daerah') {
-                showToast(`Perhatian: Akun Admin Kab/Kota [${currentUser.kabupatenKode}] berfokus pada penyelesaian Tabel Anomali Rekon.`);
-              }
-              setActiveView(v);
-            }}
-            anomalyCount={anomalyCount}
-            documentsCount={documents.length}
-          />
+      <div className="lg:pl-64 flex flex-col flex-1 min-h-screen min-w-0 w-full">
+        {/* Mobile Sidebar Launcher Strip ONLY (No Header Menu Bar) */}
+        <div className="lg:hidden sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800 px-3 h-12 flex items-center justify-between gap-2 print:hidden">
+          <button
+            type="button"
+            onClick={() => setIsMobileSidebarOpen(true)}
+            className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold border border-slate-700 cursor-pointer shrink-0"
+          >
+            <Menu className="w-4 h-4 text-rose-400" />
+            <span>Menu</span>
+          </button>
+
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Database className="w-4 h-4 text-rose-400 shrink-0" />
+            <span className="font-extrabold text-sm tracking-tight font-mono truncate">
+              REKONDA
+            </span>
+          </div>
+
+          <span className="text-[11px] font-semibold text-slate-300 truncate max-w-[110px]">
+            {currentUser.isOwner || currentUser.role === 'pemilik'
+              ? 'Admin Prov'
+              : currentUser.role === 'kabupaten'
+              ? `[${currentUser.kabupatenKode}]`
+              : 'Tamu'}
+          </span>
         </div>
 
         {/* Main Container with responsive scaling and width adjust */}
         <main
-          className={`flex-1 w-full ${
+          className={`flex-1 w-full min-w-0 ${
             displaySettings.width === 'full' ? 'max-w-none px-2 sm:px-4 lg:px-6' : 'max-w-7xl mx-auto px-2 sm:px-4 lg:px-6'
           } ${
             displaySettings.scale === 'small'

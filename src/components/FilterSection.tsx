@@ -67,13 +67,13 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
   return (
     <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden mb-5 w-full">
       {/* Banner Header Title (Iconic Crimson Header) */}
-      <div className="bg-gradient-to-r from-[#c02652] via-[#b91c47] to-[#9f1239] px-5 py-3 text-white flex items-center justify-between shadow-inner">
-        <div className="flex items-center gap-2.5">
-          <div className="w-2 h-5 bg-white/40 rounded-full" />
-          <h1 className="text-lg font-bold tracking-tight text-white drop-shadow-xs">
+      <div className="bg-gradient-to-r from-[#c02652] via-[#b91c47] to-[#9f1239] px-3 sm:px-5 py-2.5 sm:py-3 text-white flex flex-wrap items-center justify-between gap-2 shadow-inner">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <div className="w-2 h-5 bg-white/40 rounded-full shrink-0" />
+          <h1 className="text-base sm:text-lg font-bold tracking-tight text-white drop-shadow-xs">
             Rekon Daerah
           </h1>
-          <span className="text-[11px] bg-white/20 text-white font-semibold px-2 py-0.5 rounded-full ml-1">
+          <span className="text-[10px] sm:text-[11px] bg-white/20 text-white font-semibold px-2 py-0.5 rounded-full">
             IKK Periode: {globalSettings?.periodeBannerText || 'TW III/IV 2026 s/d TW I/II 2027'}
           </span>
           {globalSettings?.defaultTriwulanAktif && (
@@ -101,10 +101,10 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
       </div>
 
       {/* Control Bar (Auto-fit layout) */}
-      <div className="p-4 bg-white border-b border-slate-200">
+      <div className="p-3 sm:p-4 bg-white border-b border-slate-200">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
           {/* Provinsi Selector */}
-          <div className="md:col-span-3">
+          <div className="md:col-span-3 min-w-0">
             <label className="block text-[11px] font-bold text-slate-700 mb-1">
               Pilih Provinsi
             </label>
@@ -132,12 +132,12 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
           </div>
 
           {/* Komoditas Selector & Stepper */}
-          <div className="md:col-span-5">
+          <div className="md:col-span-5 min-w-0">
             <label className="block text-[11px] font-bold text-slate-700 mb-1">
               Kualitas / Komoditas Rekon
             </label>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
-              <div className="relative flex-1">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 min-w-0">
+              <div className="relative flex-1 min-w-0">
                 <select
                   value={selectedKomoditas.kode}
                   onChange={(e) => {
@@ -159,13 +159,13 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
                 </div>
               </div>
 
-              {/* Stepper Buttons (Yellow Buttons from screenshot) */}
-              <div className="flex items-center gap-1 shrink-0 self-center sm:self-auto">
+              {/* Stepper Buttons */}
+              <div className="flex items-center justify-between sm:justify-start gap-1 shrink-0">
                 <button
                   type="button"
                   onClick={onPrevKomoditas}
                   title="Komoditas Sebelumnya"
-                  className="inline-flex items-center gap-0.5 px-2.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-lg shadow-2xs border border-amber-500/40 transition-colors cursor-pointer"
+                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-0.5 px-2.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-lg shadow-2xs border border-amber-500/40 transition-colors cursor-pointer"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                   <span>Sebelumnya</span>
@@ -179,7 +179,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
                   type="button"
                   onClick={onNextKomoditas}
                   title="Komoditas Selanjutnya"
-                  className="inline-flex items-center gap-0.5 px-2.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-lg shadow-2xs border border-amber-500/40 transition-colors cursor-pointer"
+                  className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-0.5 px-2.5 py-1.5 text-xs font-bold text-amber-950 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 rounded-lg shadow-2xs border border-amber-500/40 transition-colors cursor-pointer"
                 >
                   <span>Selanjutnya</span>
                   <ChevronRight className="w-3.5 h-3.5" />
@@ -189,7 +189,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
           </div>
 
           {/* Action Buttons */}
-          <div className="md:col-span-4 flex flex-col gap-1.5">
+          <div className="md:col-span-4 flex flex-col gap-1.5 min-w-0">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
               <button
                 type="button"
@@ -219,7 +219,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
               className="w-full inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 rounded-lg shadow-2xs transition-all cursor-pointer"
             >
               <Users className="w-3.5 h-3.5 shrink-0" />
-              <span>Unduh excel Seluruh Responden</span>
+              <span className="truncate">Unduh excel Seluruh Responden</span>
             </button>
           </div>
         </div>
@@ -227,55 +227,55 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
 
       {/* KPI Overview Strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 bg-slate-50/70 divide-x divide-y md:divide-y-0 divide-slate-200">
-        <div className="p-3">
-          <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold mb-0.5">
-            <Building2 className="w-3.5 h-3.5 text-rose-600" />
-            <span>Kabupaten Terdata</span>
+        <div className="p-2.5 sm:p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-500 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+            <Building2 className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+            <span className="truncate">Kabupaten Terdata</span>
           </div>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-lg font-bold font-mono text-slate-900 tabular-nums">
+            <span className="text-base sm:text-lg font-bold font-mono text-slate-900 tabular-nums">
               {data.length}
             </span>
-            <span className="text-[11px] text-slate-500">wilayah</span>
+            <span className="text-[10px] sm:text-[11px] text-slate-500">wilayah</span>
           </div>
         </div>
 
-        <div className="p-3">
-          <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold mb-0.5">
-            <BarChart2 className="w-3.5 h-3.5 text-sky-600" />
-            <span>Rata-Rata Harga 2027 (Berjalan)</span>
+        <div className="p-2.5 sm:p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-500 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+            <BarChart2 className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+            <span className="truncate">Rata-Rata Harga 2027</span>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-lg font-bold font-mono text-slate-900 tabular-nums">
+          <div className="flex items-baseline gap-1 flex-wrap">
+            <span className="text-sm sm:text-lg font-bold font-mono text-slate-900 tabular-nums">
               {formatRupiahCurrency(avgPrice2027)}
             </span>
-            <span className="text-[11px] text-slate-500">/{selectedKomoditas.satuan}</span>
+            <span className="text-[10px] sm:text-[11px] text-slate-500">/{selectedKomoditas.satuan}</span>
           </div>
         </div>
 
-        <div className="p-3">
-          <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold mb-0.5">
-            <TrendingUp className="w-3.5 h-3.5 text-amber-600" />
-            <span>Rentang Harga (Min - Max)</span>
+        <div className="p-2.5 sm:p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-500 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+            <TrendingUp className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span className="truncate">Rentang Harga</span>
           </div>
-          <div className="flex items-baseline gap-1">
-            <span className="text-xs font-mono font-bold text-slate-700 tabular-nums">
+          <div className="flex items-baseline gap-1 flex-wrap">
+            <span className="text-[11px] sm:text-xs font-mono font-bold text-slate-700 tabular-nums">
               {formatRupiahCurrency(minPrice)}
             </span>
             <span className="text-[10px] text-slate-400">s/d</span>
-            <span className="text-xs font-mono font-bold text-slate-900 tabular-nums">
+            <span className="text-[11px] sm:text-xs font-mono font-bold text-slate-900 tabular-nums">
               {formatRupiahCurrency(maxPrice)}
             </span>
           </div>
         </div>
 
-        <div className="p-3">
-          <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-semibold mb-0.5">
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Status Verifikasi & Anomali</span>
+        <div className="p-2.5 sm:p-3 min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-500 text-[10px] sm:text-[11px] font-semibold mb-0.5">
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span className="truncate">Verifikasi &amp; Anomali</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-bold font-mono text-emerald-700 tabular-nums">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-base sm:text-lg font-bold font-mono text-emerald-700 tabular-nums">
               {verifiedCount} / {data.length}
             </span>
             {anomalyCount > 0 && (
