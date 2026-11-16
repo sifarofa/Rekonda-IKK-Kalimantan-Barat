@@ -1,10 +1,12 @@
 import { supabase } from '../lib/supabase';
 import { AppDocument, AppDocumentMetadata } from '../types/documents';
-import { KabupatenRekon } from '../types/rekonda';
+import { DisplaySettings, KabupatenRekon, RekondaGlobalSettings } from '../types/rekonda';
 import { RegisteredAdmin } from '../types/userAdmin';
 
 export const DOCUMENTS_BUCKET = 'documents';
 export const APP_DOCUMENTS_TABLE = 'app_documents';
+export const REKONDA_RECORDS_TABLE = 'rekonda_records';
+export const REKONDA_SETTINGS_TABLE = 'rekonda_settings';
 
 export const CLIENT_SESSION_ID =
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -327,3 +329,181 @@ export async function loadRekondaOverridesFromDoc(
 
   return null;
 }
+
+/* =========================================================================
+ * Granular Cloud Sync for `rekonda_records` & `rekonda_settings`
+ * ========================================================================= */
+
+export interface RekondaRecordRow {
+  id: string;
+  komoditas_kode: string;
+  data: KabupatenRekon;
+  status?: string;
+  catatan?: string;
+  updated_at?: string;
+}
+
+export async function fetchRekondaRecordsFromSupabase(
+  defaultProvinsiKode: string = '61'
+): Promise<Record<string, KabupatenRekon[]>> {
+  const pageSize = 1000;
+  let from = 0;
+  const allRows: RekondaRecordRow[] = [];
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(REKONDA_RECORDS_TABLE)
+      .select('id, komoditas_kode, data, status, catatan, updated_at')
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      throw new Error(`Gagal memuat rekonda_records: ${error.message}`);
+    }
+
+    const batch = (data || []) as RekondaRecordRow[];
+    allRows.push(...batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  const grouped: Record<string, KabupatenRekon[]> = {};
+  for (const row of allRows) {
+    if (!row.data || typeof row.data !== 'object') continue;
+    const parts = String(row.id || '').split('_');
+    const provKode = parts.length >= 3 ? parts[0] : defaultProvinsiKode;
+    const komKode = row.komoditas_kode || (parts.length >= 3 ? parts[2] : '');
+    if (!komKode) continue;
+
+    const dbKey = `${provKode}_${komKode}`;
+    if (!grouped[dbKey]) grouped[dbKey] = [];
+
+    const mergedRecord: KabupatenRekon = {
+      ...row.data,
+      statusRekon: (row.status as KabupatenRekon['statusRekon']) || row.data.statusRekon || 'belum_rekon',
+      catatan: typeof row.catatan === 'string' ? row.catatan : row.data.catatan || '',
+      isVerified: ((row.status as string) || row.data.statusRekon) === 'rekon_selesai'
+    };
+
+    const existingIdx = grouped[dbKey].findIndex((k) => k.kode === mergedRecord.kode);
+    if (existingIdx >= 0) {
+      grouped[dbKey][existingIdx] = mergedRecord;
+    } else {
+      grouped[dbKey].push(mergedRecord);
+    }
+  }
+
+  return grouped;
+}
+
+export async function upsertRekondaRecordToSupabase(
+  dbKey: string,
+  kab: KabupatenRekon
+): Promise<void> {
+  const parts = dbKey.split('_');
+  const provKode = parts[0] || '61';
+  const komKode = parts[1] || '';
+  if (!komKode || !kab.kode) return;
+
+  const row: RekondaRecordRow = {
+    id: `${provKode}_${kab.kode}_${komKode}`,
+    komoditas_kode: komKode,
+    data: kab,
+    status: kab.statusRekon || 'belum_rekon',
+    catatan: kab.catatan || '',
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from(REKONDA_RECORDS_TABLE)
+    .upsert(row, { onConflict: 'id' });
+
+  if (error) {
+    console.warn('Supabase rekonda_records upsert notice:', error.message);
+  }
+}
+
+export async function upsertRekondaBatchToSupabase(
+  recordsMap: Record<string, KabupatenRekon[]>
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const rows: RekondaRecordRow[] = [];
+
+  for (const [dbKey, list] of Object.entries(recordsMap)) {
+    const parts = dbKey.split('_');
+    const provKode = parts[0] || '61';
+    const komKode = parts[1] || '';
+    if (!komKode || !Array.isArray(list)) continue;
+
+    for (const kab of list) {
+      if (!kab?.kode) continue;
+      rows.push({
+        id: `${provKode}_${kab.kode}_${komKode}`,
+        komoditas_kode: komKode,
+        data: kab,
+        status: kab.statusRekon || 'belum_rekon',
+        catatan: kab.catatan || '',
+        updated_at: nowIso
+      });
+    }
+  }
+
+  if (rows.length === 0) return;
+
+  const chunkSize = 200;
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    const { error } = await supabase
+      .from(REKONDA_RECORDS_TABLE)
+      .upsert(chunk, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase rekonda_records batch upsert notice:', error.message);
+    }
+  }
+}
+
+export async function fetchRekondaSettingsFromSupabase(): Promise<{
+  globalConfig: Partial<RekondaGlobalSettings> | null;
+  displayDefaults: Partial<DisplaySettings> | null;
+}> {
+  const { data, error } = await supabase
+    .from(REKONDA_SETTINGS_TABLE)
+    .select('key, value, updated_at');
+
+  if (error) {
+    throw new Error(`Gagal memuat rekonda_settings: ${error.message}`);
+  }
+
+  let globalConfig: Partial<RekondaGlobalSettings> | null = null;
+  let displayDefaults: Partial<DisplaySettings> | null = null;
+
+  for (const row of data || []) {
+    if (row.key === 'global_config' && row.value && typeof row.value === 'object') {
+      globalConfig = row.value as Partial<RekondaGlobalSettings>;
+    } else if (row.key === 'display_defaults' && row.value && typeof row.value === 'object') {
+      displayDefaults = row.value as Partial<DisplaySettings>;
+    }
+  }
+
+  return { globalConfig, displayDefaults };
+}
+
+export async function upsertRekondaSettingToSupabase<T>(
+  key: string,
+  value: T
+): Promise<void> {
+  const { error } = await supabase
+    .from(REKONDA_SETTINGS_TABLE)
+    .upsert(
+      {
+        key,
+        value,
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: 'key' }
+    );
+
+  if (error) {
+    throw new Error(`Gagal menyimpan pengaturan ke rekonda_settings: ${error.message}`);
+  }
+}
+

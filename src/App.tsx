@@ -15,8 +15,11 @@ import { LoginLandingPage } from './components/LoginLandingPage';
 import { Sidebar } from './components/Sidebar';
 import { UserManagementModal } from './components/UserManagementModal';
 import { LkSewaAlatModal } from './components/LkSewaAlatModal';
+import { GlobalSettingsModal } from './components/GlobalSettingsModal';
+import { SimulasiRankingView } from './components/SimulasiRankingView';
 import { PROVINSI_LIST, KOMODITAS_LIST, INITIAL_KABUPATEN_DATA } from './data/mockData';
 import {
+  ActiveViewType,
   KabupatenRekon,
   RespondenData,
   Komoditas,
@@ -25,7 +28,9 @@ import {
   StatusRekon,
   DisplaySettings,
   TipeSewaAlat,
-  LkSewaAlatData
+  LkSewaAlatData,
+  RekondaGlobalSettings,
+  DEFAULT_GLOBAL_SETTINGS
 } from './types/rekonda';
 import { AppDocument } from './types/documents';
 import { RegisteredAdmin } from './types/userAdmin';
@@ -40,11 +45,18 @@ import { supabase } from './lib/supabase';
 import {
   APP_DOCUMENTS_TABLE,
   CLIENT_SESSION_ID,
+  REKONDA_RECORDS_TABLE,
+  REKONDA_SETTINGS_TABLE,
   fetchAllAppDocuments,
+  fetchRekondaRecordsFromSupabase,
+  fetchRekondaSettingsFromSupabase,
   isSystemSyncDocument,
   loadRekondaOverridesFromDoc,
   setKnownSystemSyncDocs,
-  syncRekondaOverridesToSupabase
+  syncRekondaOverridesToSupabase,
+  upsertRekondaBatchToSupabase,
+  upsertRekondaRecordToSupabase,
+  upsertRekondaSettingToSupabase
 } from './services/supabaseDocuments';
 import { hydrateRegisteredAdminsFromCloud } from './utils/userAdminStorage';
 import { CheckCircle2 } from 'lucide-react';
@@ -53,8 +65,8 @@ const AUTH_SESSION_KEY = 'rekonda_auth_session_v2';
 const DISPLAY_SESSION_KEY = 'rekonda_display_session_v1';
 
 export default function App() {
-  // Navigation View: 'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip'
-  const [activeView, setActiveView] = useState<'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip'>('rekon_daerah');
+  // Navigation View: 'rekon_daerah' | 'anomali_rekon' | 'simulasi_ranking' | 'dokumen_arsip'
+  const [activeView, setActiveView] = useState<ActiveViewType>('rekon_daerah');
 
   // Authentication State (Tab session only — no persistent main data in localStorage)
   const [currentUser, setCurrentUser] = useState<UserAuth>(() => {
@@ -91,6 +103,7 @@ export default function App() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [isDisplayAdjustOpen, setIsDisplayAdjustOpen] = useState<boolean>(false);
   const [isUserManagementOpen, setIsUserManagementOpen] = useState<boolean>(false);
+  const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [lkModalState, setLkModalState] = useState<{
     isOpen: boolean;
@@ -109,7 +122,12 @@ export default function App() {
   const [isLoadingDocs, setIsLoadingDocs] = useState<boolean>(true);
   const [docsError, setDocsError] = useState<string | null>(null);
 
-  // Device & Display Settings (Session only)
+  // Global Application Settings synced via Supabase `rekonda_settings`
+  const [globalSettings, setGlobalSettings] = useState<RekondaGlobalSettings>(
+    DEFAULT_GLOBAL_SETTINGS
+  );
+
+  // Device & Display Settings (Session + Supabase `rekonda_settings` display_defaults)
   const [displaySettings, setDisplaySettings] = useState<DisplaySettings>(() => {
     try {
       const saved = sessionStorage.getItem(DISPLAY_SESSION_KEY);
@@ -123,6 +141,10 @@ export default function App() {
     try {
       sessionStorage.setItem(DISPLAY_SESSION_KEY, JSON.stringify(newSettings));
     } catch {}
+    if (currentUser.isOwner || currentUser.role === 'pemilik') {
+      lastLocalSettingsMutationAtRef.current = Date.now();
+      upsertRekondaSettingToSupabase('display_defaults', newSettings).catch(() => {});
+    }
     showToast('Tampilan berhasil disesuaikan.');
   };
 
@@ -132,6 +154,10 @@ export default function App() {
     try {
       sessionStorage.setItem(DISPLAY_SESSION_KEY, JSON.stringify(defaultSettings));
     } catch {}
+    if (currentUser.isOwner || currentUser.role === 'pemilik') {
+      lastLocalSettingsMutationAtRef.current = Date.now();
+      upsertRekondaSettingToSupabase('display_defaults', defaultSettings).catch(() => {});
+    }
     showToast('Pengaturan tampilan dikembalikan ke standar.');
   };
 
@@ -172,14 +198,63 @@ export default function App() {
             ? item.respondents
             : (fallbackItem?.respondents || []);
 
+          // Derive current-year quarter averages strictly from respondents so un-uploaded quarters (e.g. TW I & II 2027) show '-'
+          let cleanTw3_26 = item.hargaTw3_2026 || 0;
+          let cleanTw4_26 = item.hargaTw4_2026 || 0;
+          let cleanTw1_27 = item.hargaTw1_2027 || 0;
+          let cleanTw2_27 = item.hargaTw2_2027 || 0;
+          let cleanHarga2027 = item.harga2027 || 0;
+
+          if (Array.isArray(item.respondents)) {
+            if (respondents.length > 0) {
+              const qTw3 = respondents.filter((r) => r.tahun === 2026 && r.triwulan === 3).map((r) => r.harga).filter((p) => p > 0);
+              const qTw4 = respondents.filter((r) => r.tahun === 2026 && r.triwulan === 4).map((r) => r.harga).filter((p) => p > 0);
+              const qTw1 = respondents.filter((r) => r.tahun === 2027 && r.triwulan === 1).map((r) => r.harga).filter((p) => p > 0);
+              const qTw2 = respondents.filter((r) => r.tahun === 2027 && r.triwulan === 2).map((r) => r.harga).filter((p) => p > 0);
+
+              cleanTw3_26 = qTw3.length > 0 ? Math.round(qTw3.reduce((a, b) => a + b, 0) / qTw3.length) : 0;
+              cleanTw4_26 = qTw4.length > 0 ? Math.round(qTw4.reduce((a, b) => a + b, 0) / qTw4.length) : 0;
+              cleanTw1_27 = qTw1.length > 0 ? Math.round(qTw1.reduce((a, b) => a + b, 0) / qTw1.length) : 0;
+              cleanTw2_27 = qTw2.length > 0 ? Math.round(qTw2.reduce((a, b) => a + b, 0) / qTw2.length) : 0;
+
+              const hasKabLevelLk =
+                item.tipeSewa === 'all_in' &&
+                Boolean(item.lkSewaAlat) &&
+                (item.lkSewaAlat?.hasilSewaMurniBulan ?? 0) > 0 &&
+                !respondents.some((r) => r.tipeSewa === 'all_in' && r.lkSewaAlat);
+
+              if (!hasKabLevelLk) {
+                const validQ = [cleanTw3_26, cleanTw4_26, cleanTw1_27, cleanTw2_27].filter((v) => v > 0);
+                cleanHarga2027 = validQ.length > 0
+                  ? Math.round(validQ.reduce((a, b) => a + b, 0) / validQ.length)
+                  : 0;
+              }
+            } else if (!(item.tipeSewa === 'all_in' && (item.lkSewaAlat?.hasilSewaMurniBulan ?? 0) > 0)) {
+              cleanTw3_26 = 0;
+              cleanTw4_26 = 0;
+              cleanTw1_27 = 0;
+              cleanTw2_27 = 0;
+              cleanHarga2027 = 0;
+            }
+          }
+
+          const recomputedRasio = cleanHarga2026 > 0 && cleanHarga2027 > 0
+            ? parseFloat(((cleanHarga2027 / cleanHarga2026) * 100).toFixed(2))
+            : 0;
+
           return {
             ...item,
+            harga2027: cleanHarga2027,
+            hargaTw3_2026: cleanTw3_26,
+            hargaTw4_2026: cleanTw4_26,
+            hargaTw1_2027: cleanTw1_27,
+            hargaTw2_2027: cleanTw2_27,
             harga2026: cleanHarga2026,
             hargaTw3_2025: isMock100k ? 0 : item.hargaTw3_2025 || 0,
             hargaTw4_2025: isMock100k ? 0 : item.hargaTw4_2025 || 0,
             hargaTw1_2026: isMock100k ? 0 : item.hargaTw1_2026 || 0,
             hargaTw2_2026: isMock100k ? 0 : item.hargaTw2_2026 || 0,
-            rasio: cleanRasio,
+            rasio: recomputedRasio,
             statusRekon: normalizedStatus,
             isVerified: normalizedStatus === 'rekon_selesai',
             catatan: isAuto ? '' : c,
@@ -197,6 +272,10 @@ export default function App() {
   );
   const syncedOverridesRef = useRef<Record<string, KabupatenRekon[]>>({});
   const dbSyncTimerRef = useRef<number | null>(null);
+  const recordsRealtimeDebounceRef = useRef<number | null>(null);
+  const settingsRealtimeDebounceRef = useRef<number | null>(null);
+  const lastLocalRecordMutationAtRef = useRef<number>(0);
+  const lastLocalSettingsMutationAtRef = useRef<number>(0);
 
   // Dynamic Chart Data synced with Table sorting
   const [chartSortedData, setChartSortedData] = useState<KabupatenRekon[]>([]);
@@ -250,6 +329,111 @@ export default function App() {
     [currentUser.email, currentUser.name]
   );
 
+  // Fetch global & display settings from Supabase `rekonda_settings`
+  const fetchSettings = useCallback(
+    async (fromRealtime: boolean = false) => {
+      try {
+        const { globalConfig, displayDefaults } = await fetchRekondaSettingsFromSupabase();
+        if (globalConfig) {
+          setGlobalSettings({
+            ...DEFAULT_GLOBAL_SETTINGS,
+            ...globalConfig
+          });
+        }
+        if (displayDefaults && displayDefaults.density && displayDefaults.scale && displayDefaults.width) {
+          const hasLocalDisplayOverride = Boolean(sessionStorage.getItem(DISPLAY_SESSION_KEY));
+          if (!hasLocalDisplayOverride || fromRealtime) {
+            setDisplaySettings(displayDefaults as DisplaySettings);
+          }
+        }
+        if (fromRealtime && Date.now() - lastLocalSettingsMutationAtRef.current > 2000) {
+          showToast('Pengaturan aplikasi diperbarui otomatis dari perangkat lain.');
+        }
+      } catch (err) {
+        console.warn('Supabase rekonda_settings fetch notice:', err);
+      }
+    },
+    [showToast]
+  );
+
+  // Upsert global settings into Supabase `rekonda_settings` (Admin Provinsi ONLY)
+  const handleSaveGlobalSettings = useCallback(
+    async (nextSettings: RekondaGlobalSettings) => {
+      const isProvinsiAdmin = currentUser.isOwner || currentUser.role === 'pemilik';
+      if (!isProvinsiAdmin) {
+        throw new Error('Akses terbatas: Pengaturan Global hanya dapat diubah oleh Admin Provinsi.');
+      }
+      lastLocalSettingsMutationAtRef.current = Date.now();
+      await upsertRekondaSettingToSupabase('global_config', nextSettings);
+      setGlobalSettings(nextSettings);
+      showToast('Pengaturan global berhasil disimpan & disinkronkan ke semua perangkat.');
+    },
+    [currentUser.isOwner, currentUser.role, showToast]
+  );
+
+  // Fetch Rekon data from Supabase `rekonda_records` (with fallback merge from `app_documents` snapshot)
+  const fetchData = useCallback(
+    async (fromRealtime: boolean = false) => {
+      try {
+        const [recordsOverrides, allDocs] = await Promise.all([
+          fetchRekondaRecordsFromSupabase('61').catch(() => ({} as Record<string, KabupatenRekon[]>)),
+          fetchAllAppDocuments().catch(() => [] as AppDocument[])
+        ]);
+
+        let snapshotOverrides: Record<string, KabupatenRekon[]> = {};
+        if (allDocs.length > 0) {
+          setKnownSystemSyncDocs(allDocs);
+          setDocuments(allDocs.filter((doc) => !isSystemSyncDocument(doc)));
+
+          const adminDoc = allDocs.find(
+            (d) => d.metadata?.is_system && d.metadata?.system_type === 'rekonda_admins'
+          );
+          if (adminDoc && Array.isArray(adminDoc.metadata?.admins)) {
+            hydrateRegisteredAdminsFromCloud(adminDoc.metadata.admins as RegisteredAdmin[]);
+          }
+
+          const dbDoc = allDocs.find(
+            (d) => d.metadata?.is_system && d.metadata?.system_type === 'rekonda_db_snapshot'
+          );
+          if (dbDoc) {
+            const parsedSnap = await loadRekondaOverridesFromDoc(dbDoc);
+            if (parsedSnap) snapshotOverrides = parsedSnap;
+          }
+        }
+
+        const mergedDb: Record<string, KabupatenRekon[]> = {
+          ...INITIAL_KABUPATEN_DATA,
+          ...snapshotOverrides
+        };
+
+        // Overlay granular records from `rekonda_records` per kabupaten code
+        for (const [key, recList] of Object.entries(recordsOverrides)) {
+          const baseList = mergedDb[key] || INITIAL_KABUPATEN_DATA[key] || [];
+          const recByKode = new Map(recList.map((r) => [r.kode, r]));
+          if (baseList.length > 0) {
+            mergedDb[key] = baseList.map((baseItem) => recByKode.get(baseItem.kode) || baseItem);
+          } else {
+            mergedDb[key] = recList;
+          }
+        }
+
+        syncedOverridesRef.current = {
+          ...snapshotOverrides,
+          ...recordsOverrides
+        };
+
+        setDatabase(sanitizeCatatan(mergedDb));
+
+        if (fromRealtime && Date.now() - lastLocalRecordMutationAtRef.current > 2000) {
+          showToast('Data Rekon diperbarui otomatis dari perangkat lain.');
+        }
+      } catch (err: any) {
+        console.warn('Supabase fetchData notice:', err);
+      }
+    },
+    [showToast]
+  );
+
   // Load all app_documents ordered by created_at DESC (and hydrate cloud data + admin users)
   const loadSupabaseDocumentsAndState = useCallback(async () => {
     setIsLoadingDocs(true);
@@ -269,50 +453,49 @@ export default function App() {
         hydrateRegisteredAdminsFromCloud(adminDoc.metadata.admins as RegisteredAdmin[]);
       }
 
-      // Hydrate Rekon Database overrides from newest cloud snapshot
-      const dbDoc = allDocs.find(
-        (d) => d.metadata?.is_system && d.metadata?.system_type === 'rekonda_db_snapshot'
-      );
-      if (dbDoc) {
-        const overrides = await loadRekondaOverridesFromDoc(dbDoc);
-        if (overrides) {
-          syncedOverridesRef.current = overrides;
-          setDatabase(sanitizeCatatan({ ...INITIAL_KABUPATEN_DATA, ...overrides }));
-          return;
-        }
-      }
-
-      // Optional fallback check to Express backend if no Supabase DB snapshot exists yet
-      fetch('/api/data')
-        .then((res) => res.json())
-        .then((res) => {
-          if (res.success && res.data && Object.keys(res.data).length >= 50) {
-            const sample = res.data['61_1902'] || res.data['61_0102'];
-            const k6106 = sample?.find((k: any) => k.kode === '6106');
-            const hasCorrectedCodes =
-              Boolean(res.data['61_1402']) &&
-              Boolean(res.data['61_5001']) &&
-              Boolean(res.data['61_6001']) &&
-              !res.data['61_1201'] &&
-              !res.data['61_4201'];
-            if (k6106 && k6106.nama.toUpperCase().includes('KETAPANG') && hasCorrectedCodes) {
-              setDatabase(sanitizeCatatan(res.data));
-            }
-          }
-        })
-        .catch(() => {});
+      // Hydrate Rekon Database from `rekonda_records` + fallback snapshot
+      await fetchData(false);
     } catch (err: any) {
       setDocsError(err.message || 'Gagal memuat data dari Supabase.');
     } finally {
       setIsLoadingDocs(false);
     }
-  }, []);
+  }, [fetchData]);
 
-  // Initial fetch on mount + Supabase Realtime postgres_changes subscription
+  // Initial fetch + Supabase Realtime listeners (`rekonda-realtime` w/ 800ms debounce + `app_documents`)
   useEffect(() => {
     loadSupabaseDocumentsAndState();
+    fetchSettings(false);
 
-    const channel = supabase
+    const rekondaChannel = supabase
+      .channel('rekonda-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: REKONDA_RECORDS_TABLE },
+        () => {
+          if (recordsRealtimeDebounceRef.current) {
+            window.clearTimeout(recordsRealtimeDebounceRef.current);
+          }
+          recordsRealtimeDebounceRef.current = window.setTimeout(() => {
+            fetchData(true);
+          }, 800);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: REKONDA_SETTINGS_TABLE },
+        () => {
+          if (settingsRealtimeDebounceRef.current) {
+            window.clearTimeout(settingsRealtimeDebounceRef.current);
+          }
+          settingsRealtimeDebounceRef.current = window.setTimeout(() => {
+            fetchSettings(true);
+          }, 800);
+        }
+      )
+      .subscribe();
+
+    const docsChannel = supabase
       .channel('app_documents_realtime_sync')
       .on(
         'postgres_changes',
@@ -335,14 +518,12 @@ export default function App() {
                 newRow.metadata?.system_type === 'rekonda_db_snapshot' &&
                 newRow.metadata?.client_id !== CLIENT_SESSION_ID
               ) {
-                try {
-                  const overrides = await loadRekondaOverridesFromDoc(newRow);
-                  if (overrides) {
-                    syncedOverridesRef.current = overrides;
-                    setDatabase(sanitizeCatatan({ ...INITIAL_KABUPATEN_DATA, ...overrides }));
-                    showToast('Data Rekon diperbarui otomatis dari perangkat lain.');
-                  }
-                } catch {}
+                if (recordsRealtimeDebounceRef.current) {
+                  window.clearTimeout(recordsRealtimeDebounceRef.current);
+                }
+                recordsRealtimeDebounceRef.current = window.setTimeout(() => {
+                  fetchData(true);
+                }, 800);
               }
               return;
             }
@@ -386,9 +567,16 @@ export default function App() {
       if (dbSyncTimerRef.current) {
         window.clearTimeout(dbSyncTimerRef.current);
       }
-      supabase.removeChannel(channel);
+      if (recordsRealtimeDebounceRef.current) {
+        window.clearTimeout(recordsRealtimeDebounceRef.current);
+      }
+      if (settingsRealtimeDebounceRef.current) {
+        window.clearTimeout(settingsRealtimeDebounceRef.current);
+      }
+      supabase.removeChannel(rekondaChannel);
+      supabase.removeChannel(docsChannel);
     };
-  }, [loadSupabaseDocumentsAndState, showToast]);
+  }, [fetchData, fetchSettings, loadSupabaseDocumentsAndState]);
 
   // Auth Login Handlers
   const handleLoginOwner = (email: string, _name: string) => {
@@ -673,7 +861,9 @@ export default function App() {
     } else {
       currentList.push(recomputed);
     }
+    lastLocalRecordMutationAtRef.current = Date.now();
     saveUpdatedList(currentList);
+    upsertRekondaRecordToSupabase(currentKey, recomputed).catch(() => {});
 
     // Sync active detail modal
     if (detailModalKab && (detailModalKab.id === recomputed.id || detailModalKab.kode === recomputed.kode)) {
@@ -695,20 +885,32 @@ export default function App() {
     status: StatusRekon,
     catatan: string
   ) => {
+    const isProvinsiAdmin = currentUser.isOwner || currentUser.role === 'pemilik';
+    if (!isProvinsiAdmin && (globalSettings.isRekonLocked || !globalSettings.allowKabKotaEditAnomali)) {
+      showToast('Input rekon sedang dikunci oleh Admin Provinsi.');
+      return;
+    }
+
+    let updatedRecord: KabupatenRekon | null = null;
     setDatabase((prev) => {
       const list = [...(prev[targetKey] || [])];
       const idx = list.findIndex((k) => k.id === kabupatenId || k.kode === kabupatenId);
       if (idx >= 0) {
-        list[idx] = {
+        updatedRecord = {
           ...list[idx],
           statusRekon: status,
           catatan,
           isVerified: status === 'rekon_selesai'
         };
+        list[idx] = updatedRecord;
       }
       const nextDb = { ...prev, [targetKey]: list };
 
+      lastLocalRecordMutationAtRef.current = Date.now();
       scheduleDatabaseCloudSync(targetKey, list);
+      if (updatedRecord) {
+        upsertRekondaRecordToSupabase(targetKey, updatedRecord).catch(() => {});
+      }
 
       fetch('/api/anomali/update', {
         method: 'POST',
@@ -780,7 +982,9 @@ export default function App() {
       updatedKabSnapshot = recomputed;
 
       const nextDb = { ...prev, [targetKey]: list };
+      lastLocalRecordMutationAtRef.current = Date.now();
       scheduleDatabaseCloudSync(targetKey, list);
+      upsertRekondaRecordToSupabase(targetKey, recomputed).catch(() => {});
 
       fetch('/api/kabupaten/update', {
         method: 'POST',
@@ -821,6 +1025,11 @@ export default function App() {
     }
 
     const isProvinsiAdmin = currentUser.isOwner || currentUser.role === 'pemilik';
+    if (!isProvinsiAdmin && (globalSettings.isRekonLocked || !globalSettings.allowKabKotaKonfSewa)) {
+      showToast('Konfirmasi sewa alat sedang dikunci oleh Admin Provinsi.');
+      return;
+    }
+
     const canEditTarget =
       isProvinsiAdmin ||
       (currentUser.role === 'kabupaten' && currentUser.kabupatenKode === kabupatenKode);
@@ -1015,10 +1224,10 @@ export default function App() {
     }
   };
 
-  // Guard Dokumen & Arsip view strictly for Admin Provinsi
+  // Guard Dokumen & Arsip and Simulasi Ranking views strictly for Admin Provinsi
   useEffect(() => {
     const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
-    if (activeView === 'dokumen_arsip' && !isPemilik) {
+    if ((activeView === 'dokumen_arsip' || activeView === 'simulasi_ranking') && !isPemilik) {
       setActiveView(currentUser.role === 'kabupaten' ? 'anomali_rekon' : 'rekon_daerah');
     }
   }, [activeView, currentUser.isOwner, currentUser.role]);
@@ -1063,7 +1272,13 @@ export default function App() {
         ...recomputedSlice
       };
 
+      lastLocalRecordMutationAtRef.current = Date.now();
       const actor = currentUser.email || currentUser.name || 'Admin Provinsi';
+
+      upsertRekondaBatchToSupabase(recomputedSlice).catch((err) => {
+        console.warn('Supabase rekonda_records batch sync notice:', err);
+      });
+
       syncRekondaOverridesToSupabase(syncedOverridesRef.current, actor).catch((err) => {
         console.warn('Supabase database sync notice:', err);
       });
@@ -1098,12 +1313,14 @@ export default function App() {
     setKomoditasIndex((prev) => (prev < KOMODITAS_LIST.length - 1 ? prev + 1 : 0));
   };
 
-  const handleTampilkan = () => {
+  const handleTampilkan = async () => {
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      await Promise.all([fetchData(false), fetchSettings(false)]);
+      showToast('Data rekonsiliasi & pengaturan global berhasil dimuat dari Supabase.');
+    } finally {
       setIsLoading(false);
-      showToast('Data rekonsiliasi berhasil dimuat dan disinkronkan.');
-    }, 400);
+    }
   };
 
   const handlePrint = () => {
@@ -1179,6 +1396,11 @@ export default function App() {
       setIsAuthModalOpen(true);
       return;
     }
+    const isProvinsiAdmin = currentUser.isOwner || currentUser.role === 'pemilik';
+    if (!isProvinsiAdmin && (globalSettings.isRekonLocked || !globalSettings.allowKabKotaEditAnomali)) {
+      showToast('Input rekon sedang dikunci oleh Admin Provinsi.');
+      return;
+    }
     const kab = currentKabupatenData.find((k) => k.id === kabupatenId);
     if (kab) {
       handleUpdateKabupaten({
@@ -1248,6 +1470,10 @@ export default function App() {
             showToast('Akses terbatas: Menu Dokumen & Arsip khusus Admin Provinsi.');
             return;
           }
+          if (v === 'simulasi_ranking' && !isPemilik) {
+            showToast('Akses terbatas: Menu Simulasi Ranking khusus Admin Provinsi.');
+            return;
+          }
           if (currentUser.role === 'kabupaten' && v === 'rekon_daerah') {
             showToast(`Perhatian: Akun Admin Kab/Kota [${currentUser.kabupatenKode}] berfokus pada penyelesaian Tabel Anomali Rekon.`);
           }
@@ -1261,6 +1487,15 @@ export default function App() {
         onOpenLandingLogin={() => setShowLandingLogin(true)}
         onOpenUpload={() => setIsUploadModalOpen(true)}
         onOpenDisplayAdjust={() => setIsDisplayAdjustOpen(true)}
+        onOpenGlobalSettings={() => {
+          const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
+          if (!isPemilik) {
+            showToast('Akses terbatas: Menu Pengaturan Global khusus Admin Provinsi.');
+            return;
+          }
+          setIsGlobalSettingsOpen(true);
+        }}
+        globalSettings={globalSettings}
         onOpenUserManagement={() => setIsUserManagementOpen(true)}
         onOpenLkSewaAlat={() => handleOpenLkModal()}
         onDownloadSeluruhKualitas={handleExportSeluruhKualitas}
@@ -1290,6 +1525,10 @@ export default function App() {
               const isPemilik = currentUser.isOwner || currentUser.role === 'pemilik';
               if (v === 'dokumen_arsip' && !isPemilik) {
                 showToast('Akses terbatas: Menu Dokumen & Arsip khusus Admin Provinsi.');
+                return;
+              }
+              if (v === 'simulasi_ranking' && !isPemilik) {
+                showToast('Akses terbatas: Menu Simulasi Ranking khusus Admin Provinsi.');
                 return;
               }
               if (currentUser.role === 'kabupaten' && v === 'rekon_daerah') {
@@ -1340,6 +1579,7 @@ export default function App() {
               onDownloadSeluruhKualitas={handleExportSeluruhKualitas}
               onDownloadSeluruhResponden={handleExportSeluruhResponden}
               data={currentKabupatenData}
+              globalSettings={globalSettings}
             />
 
             {/* Main Data Table with Responsive Scroll & Density */}
@@ -1402,6 +1642,16 @@ export default function App() {
               setDetailModalKab(kab);
               setSelectedKabupatenId(kab.id);
             }}
+          />
+        ) : activeView === 'simulasi_ranking' ? (
+          /* Simulasi Ranking & What-If Harga (Mode Sandbox Lokal, Khusus Admin Provinsi) */
+          <SimulasiRankingView
+            database={database}
+            provinsi={selectedProvinsi}
+            komoditasList={KOMODITAS_LIST}
+            activeTriwulan={globalSettings.defaultTriwulanAktif}
+            currentUser={currentUser}
+            onOpenAuth={() => setIsAuthModalOpen(true)}
           />
         ) : (
           /* Dokumen & Arsip Cloud (Supabase Storage + Realtime app_documents) */
@@ -1538,6 +1788,15 @@ export default function App() {
         onOpenAuth={() => setIsAuthModalOpen(true)}
         onApplyLkResult={handleApplyLkResult}
         onChangeTipeSewa={handleChangeTipeSewa}
+      />
+
+      {/* Global Settings Modal (Supabase `rekonda_settings`) */}
+      <GlobalSettingsModal
+        isOpen={isGlobalSettingsOpen}
+        onClose={() => setIsGlobalSettingsOpen(false)}
+        settings={globalSettings}
+        currentUser={currentUser}
+        onSaveSettings={handleSaveGlobalSettings}
       />
     </div>
   );

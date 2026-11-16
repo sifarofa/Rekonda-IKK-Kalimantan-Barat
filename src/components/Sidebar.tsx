@@ -14,13 +14,16 @@ import {
   CheckCircle2,
   FileDown,
   Calculator,
-  FolderOpen
+  FolderOpen,
+  Settings,
+  Lock,
+  TrendingUp
 } from 'lucide-react';
-import { UserAuth } from '../types/rekonda';
+import { ActiveViewType, RekondaGlobalSettings, UserAuth } from '../types/rekonda';
 
 interface SidebarProps {
-  activeView: 'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip';
-  onSelectView: (view: 'rekon_daerah' | 'anomali_rekon' | 'dokumen_arsip') => void;
+  activeView: ActiveViewType;
+  onSelectView: (view: ActiveViewType) => void;
   anomalyCount: number;
   documentsCount: number;
   currentUser: UserAuth;
@@ -28,6 +31,8 @@ interface SidebarProps {
   onOpenLandingLogin: () => void;
   onOpenUpload: () => void;
   onOpenDisplayAdjust: () => void;
+  onOpenGlobalSettings?: () => void;
+  globalSettings?: RekondaGlobalSettings;
   onOpenUserManagement: () => void;
   onOpenLkSewaAlat?: () => void;
   onDownloadSeluruhKualitas: () => void;
@@ -47,6 +52,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenLandingLogin,
   onOpenUpload,
   onOpenDisplayAdjust,
+  onOpenGlobalSettings,
+  globalSettings,
   onOpenUserManagement,
   onOpenLkSewaAlat,
   onDownloadSeluruhKualitas,
@@ -218,29 +225,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </button>
 
-              {/* Menu 3: Dokumen & Arsip Cloud (Khusus Admin Provinsi) */}
+              {/* Menu 3: Simulasi Ranking (Khusus Admin Provinsi) */}
               {isPemilik && (
                 <button
                   type="button"
-                  onClick={() => onSelectView('dokumen_arsip')}
+                  onClick={() => onSelectView('simulasi_ranking')}
                   className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-bold transition-all text-left cursor-pointer ${
-                    activeView === 'dokumen_arsip'
-                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40'
+                    activeView === 'simulasi_ranking'
+                      ? 'bg-sky-600 text-white shadow-md shadow-sky-950/40'
                       : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
                   }`}
                 >
-                  <FolderOpen className="w-4 h-4 shrink-0 text-emerald-300" />
+                  <TrendingUp className="w-4 h-4 shrink-0 text-sky-300" />
                   <div className="flex-1 truncate">
-                    <div className="font-bold flex items-center justify-between">
-                      <span>Dokumen &amp; Arsip</span>
-                      {documentsCount > 0 && (
-                        <span className="bg-emerald-500/30 border border-emerald-400/50 text-emerald-100 text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
-                          {documentsCount}
-                        </span>
-                      )}
-                    </div>
+                    <div className="font-bold">Simulasi Ranking</div>
                     <div className="text-[10px] opacity-80 font-normal truncate">
-                      Upload &amp; Sinkronisasi Cloud
+                      What-If Harga &amp; Peringkat
                     </div>
                   </div>
                 </button>
@@ -298,6 +298,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </button>
 
+              {/* Dokumen & Arsip Cloud (Dipindahkan ke Manajemen Pengguna, Khusus Admin Provinsi) */}
+              {isPemilik && (
+                <button
+                  type="button"
+                  onClick={() => onSelectView('dokumen_arsip')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors text-left cursor-pointer ${
+                    activeView === 'dokumen_arsip'
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                  }`}
+                >
+                  <FolderOpen className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <div className="flex-1 truncate">
+                    <div className="font-semibold flex items-center justify-between">
+                      <span>Dokumen &amp; Arsip</span>
+                      {documentsCount > 0 && (
+                        <span className="bg-emerald-500/30 border border-emerald-400/50 text-emerald-100 text-[10px] font-extrabold px-1.5 py-0.2 rounded-full">
+                          {documentsCount}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] opacity-80 truncate">
+                      Upload &amp; Sinkronisasi Cloud
+                    </div>
+                  </div>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={handleUploadClick}
@@ -315,6 +343,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                 </div>
               </button>
+
+              {isPemilik && onOpenGlobalSettings && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenGlobalSettings();
+                    if (onCloseMobile) onCloseMobile();
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800/80 transition-colors text-left cursor-pointer"
+                >
+                  <Settings className="w-4 h-4 shrink-0 text-rose-400" />
+                  <div className="flex-1 truncate">
+                    <div className="font-semibold text-slate-200 flex items-center justify-between">
+                      <span>Pengaturan Global</span>
+                      {globalSettings?.isRekonLocked && (
+                        <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate">
+                      {globalSettings?.isRekonLocked
+                        ? `Terkunci · ${globalSettings.defaultTriwulanAktif}`
+                        : `Aktif: ${globalSettings?.defaultTriwulanAktif || 'IV-2026'}`}
+                    </div>
+                  </div>
+                </button>
+              )}
             </nav>
           </div>
 

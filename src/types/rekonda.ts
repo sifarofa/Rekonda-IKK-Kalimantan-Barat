@@ -114,3 +114,24 @@ export interface DisplaySettings {
   width: DisplayWidth;
 }
 
+export type ActiveTriwulanKey = 'III-2026' | 'IV-2026' | 'I-2027' | 'II-2027';
+
+export interface RekondaGlobalSettings {
+  defaultTriwulanAktif: ActiveTriwulanKey;
+  periodeBannerText: string;
+  isRekonLocked: boolean;
+  allowKabKotaEditAnomali: boolean;
+  allowKabKotaKonfSewa: boolean;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export type ActiveViewType = 'rekon_daerah' | 'anomali_rekon' | 'simulasi_ranking' | 'dokumen_arsip';
+
+export const DEFAULT_GLOBAL_SETTINGS: RekondaGlobalSettings = {
+  defaultTriwulanAktif: 'IV-2026',
+  periodeBannerText: 'TW III/IV 2026 s/d TW I/II 2027',
+  isRekonLocked: false,
+  allowKabKotaEditAnomali: true,
+  allowKabKotaKonfSewa: true
+};

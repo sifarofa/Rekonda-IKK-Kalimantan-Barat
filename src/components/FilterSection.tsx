@@ -9,9 +9,10 @@ import {
   TrendingUp,
   BarChart2,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  Lock
 } from 'lucide-react';
-import { Komoditas, Provinsi, KabupatenRekon } from '../types/rekonda';
+import { Komoditas, Provinsi, KabupatenRekon, RekondaGlobalSettings } from '../types/rekonda';
 import { formatRupiahCurrency, formatPercent } from '../utils/formatters';
 
 interface FilterSectionProps {
@@ -30,6 +31,7 @@ interface FilterSectionProps {
   onDownloadSeluruhKualitas: () => void;
   onDownloadSeluruhResponden: () => void;
   data: KabupatenRekon[];
+  globalSettings?: RekondaGlobalSettings;
 }
 
 export const FilterSection: React.FC<FilterSectionProps> = ({
@@ -47,7 +49,8 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
   isLoading,
   onDownloadSeluruhKualitas,
   onDownloadSeluruhResponden,
-  data
+  data,
+  globalSettings
 }) => {
   // Summary calculations for 2026/2027
   const validPrices2027 = data.map((d) => d.harga2027).filter((p) => p > 0);
@@ -71,8 +74,19 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
             Rekon Daerah
           </h1>
           <span className="text-[11px] bg-white/20 text-white font-semibold px-2 py-0.5 rounded-full ml-1">
-            IKK Periode: TW III/IV 2026 s/d TW I/II 2027
+            IKK Periode: {globalSettings?.periodeBannerText || 'TW III/IV 2026 s/d TW I/II 2027'}
           </span>
+          {globalSettings?.defaultTriwulanAktif && (
+            <span className="text-[10px] bg-slate-900/35 text-rose-100 font-bold px-2 py-0.5 rounded-full hidden sm:inline">
+              Aktif: {globalSettings.defaultTriwulanAktif}
+            </span>
+          )}
+          {globalSettings?.isRekonLocked && (
+            <span className="inline-flex items-center gap-1 text-[10px] bg-amber-400 text-amber-950 font-extrabold px-2 py-0.5 rounded-full shadow-2xs">
+              <Lock className="w-3 h-3" />
+              <span>Input Terkunci</span>
+            </span>
+          )}
         </div>
 
         <div className="text-xs text-rose-100 hidden md:flex items-center gap-3">
