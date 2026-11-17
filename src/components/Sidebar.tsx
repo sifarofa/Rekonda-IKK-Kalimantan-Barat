@@ -17,7 +17,8 @@ import {
   FolderOpen,
   Settings,
   Lock,
-  TrendingUp
+  TrendingUp,
+  BookOpen
 } from 'lucide-react';
 import { ActiveViewType, RekondaGlobalSettings, UserAuth } from '../types/rekonda';
 
@@ -85,7 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Fixed Uncollapsed Sidebar (Desktop: always visible, Mobile: slide in when toggled) */}
       <aside
-        className={`fixed left-0 top-0 bottom-0 w-72 max-w-[85vw] lg:w-64 bg-slate-900 border-r border-slate-800 text-white z-50 flex flex-col justify-between shadow-xl select-none transition-transform duration-200 ease-in-out ${
+        className={`fixed left-0 top-0 bottom-0 w-72 max-w-[85vw] lg:w-64 bg-slate-900 border-r border-slate-800 text-white z-50 flex flex-col justify-between shadow-xl select-none transition-transform duration-200 ease-in-out print:hidden ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
@@ -400,6 +401,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 shrink-0 text-sky-400" />
                 <span className="truncate">Sesuaikan Tampilan</span>
+              </button>
+            </nav>
+          </div>
+
+          {/* Group 4: Bantuan & Panduan */}
+          <div>
+            <div className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
+              Panduan Penggunaan
+            </div>
+            <nav className="space-y-1">
+              <button
+                type="button"
+                onClick={() => onSelectView('buku_pedoman')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-bold transition-all text-left cursor-pointer ${
+                  activeView === 'buku_pedoman'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-950/40'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
+                }`}
+              >
+                <BookOpen className="w-4 h-4 shrink-0 text-sky-300" />
+                <div className="flex-1 truncate">
+                  <div className="font-bold">Buku Pedoman</div>
+                  <div className="text-[10px] opacity-80 font-normal truncate">
+                    Panduan Admin Kab/Kota
+                  </div>
+                </div>
               </button>
             </nav>
           </div>

@@ -137,7 +137,12 @@ export interface RekondaGlobalSettings {
   updatedAt?: string;
 }
 
-export type ActiveViewType = 'rekon_daerah' | 'anomali_rekon' | 'simulasi_ranking' | 'dokumen_arsip';
+export type ActiveViewType =
+  | 'rekon_daerah'
+  | 'anomali_rekon'
+  | 'simulasi_ranking'
+  | 'dokumen_arsip'
+  | 'buku_pedoman';
 
 export type ComparisonMode = 'all' | 'merek_acuan' | 'apple_to_apple';
 

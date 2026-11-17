@@ -39,6 +39,7 @@ import {
   ProjectedKabupatenRekon,
   projectKabupatenByComparisonMode
 } from '../utils/rekonComparison';
+import { downloadAnomaliRekonPdf } from '../utils/pdfExport';
 import { KABUPATEN_KALBAR_LIST } from '../data/kabupatenList';
 
 interface AnomaliItem {
@@ -488,7 +489,25 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
   };
 
   const handlePrint = () => {
-    window.print();
+    downloadAnomaliRekonPdf({
+      title: isKabupatenRole
+        ? `Daftar Anomali Harga: [${currentUser.kabupatenKode}] ${currentUser.kabupatenNama || ''}`
+        : 'Daftar Anomali CV & Rasio REKONDA 2026/2027',
+      subtitle: `[${provinsi.kode}] ${provinsi.nama}`,
+      rows: filteredAndSortedData.map((item, idx) => ({
+        no: idx + 1,
+        komoditasKode: item.komoditas.kode,
+        komoditasNama: item.komoditas.nama,
+        kabKode: item.kabupaten.kode,
+        kabNama: item.kabupaten.nama,
+        harga2027: item.kabupaten.harga2027,
+        harga2026: item.kabupaten.harga2026,
+        rasio: item.kabupaten.rasio,
+        cv: item.kabupaten.koefisienVariasi,
+        status: item.kabupaten.statusRekon,
+        catatan: item.kabupaten.catatan || ''
+      }))
+    });
   };
 
   return (

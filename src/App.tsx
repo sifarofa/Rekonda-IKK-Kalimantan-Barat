@@ -16,6 +16,7 @@ import { UserManagementModal } from './components/UserManagementModal';
 import { LkSewaAlatModal } from './components/LkSewaAlatModal';
 import { GlobalSettingsModal } from './components/GlobalSettingsModal';
 import { SimulasiRankingView } from './components/SimulasiRankingView';
+import { BukuPedomanView } from './components/BukuPedomanView';
 import { PROVINSI_LIST, KOMODITAS_LIST, INITIAL_KABUPATEN_DATA } from './data/mockData';
 import {
   ActiveViewType,
@@ -43,6 +44,7 @@ import {
   exportSeluruhRespondenToExcel,
   exportSeluruhKualitasToExcel
 } from './utils/excelExport';
+import { downloadRekonDaerahPdf } from './utils/pdfExport';
 import { supabase } from './lib/supabase';
 import {
   APP_DOCUMENTS_TABLE,
@@ -1396,7 +1398,13 @@ export default function App() {
   };
 
   const handlePrint = () => {
-    window.print();
+    downloadRekonDaerahPdf({
+      provinsi: selectedProvinsi,
+      komoditas: selectedKomoditas,
+      data: chartSortedData.length > 0 ? chartSortedData : projectedKabupatenData,
+      periodeText: globalSettings.periodeBannerText
+    });
+    showToast('File PDF Rekon Daerah berhasil diunduh.');
   };
 
   // Add / Edit Respondent handlers
@@ -1603,7 +1611,7 @@ export default function App() {
       />
 
       {/* Main Content Layout with desktop left padding for fixed sidebar */}
-      <div className="lg:pl-64 flex flex-col flex-1 min-h-screen min-w-0 w-full">
+      <div className="lg:pl-64 print:pl-0 flex flex-col flex-1 min-h-screen min-w-0 w-full">
         {/* Mobile Sidebar Launcher Strip ONLY (No Header Menu Bar) */}
         <div className="lg:hidden sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800 px-3 h-12 flex items-center justify-between gap-2 print:hidden">
           <button
@@ -1752,6 +1760,14 @@ export default function App() {
             activeTriwulan={globalSettings.defaultTriwulanAktif}
             currentUser={currentUser}
             onOpenAuth={() => setIsAuthModalOpen(true)}
+          />
+        ) : activeView === 'buku_pedoman' ? (
+          /* Buku Pedoman Penggunaan Web untuk Admin Kab/Kota */
+          <BukuPedomanView
+            currentUser={currentUser}
+            globalSettings={globalSettings}
+            onNavigateView={(v) => setActiveView(v)}
+            onOpenUserManagement={() => setIsUserManagementOpen(true)}
           />
         ) : (
           /* Dokumen & Arsip Cloud (Supabase Storage + Realtime app_documents) */
