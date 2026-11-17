@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { KabupatenRekon, Komoditas, RespondenData } from '../types/rekonda';
+import { CommodityMetaOverride, KabupatenRekon, Komoditas, RespondenData } from '../types/rekonda';
 import { calculateStats } from './formatters';
 
 export interface ComparisonItem {
@@ -33,6 +33,7 @@ export interface MultiParseResult {
   totalCommoditiesInFile: number;
   totalAffectedKabEntries: number;
   isMultiCommodity: boolean;
+  commodityMetadata?: Record<string, CommodityMetaOverride>;
 }
 
 /**
@@ -92,46 +93,145 @@ export function parsePrice(val: any): number {
   return isNaN(num) ? 0 : Math.round(num);
 }
 
+function getFieldCI(row: Record<string, any>, candidates: string[]): any {
+  if (!row || typeof row !== 'object') return undefined;
+  for (const cand of candidates) {
+    if (row[cand] !== undefined) return row[cand];
+  }
+  const lowerMap = new Map<string, any>();
+  for (const [k, v] of Object.entries(row)) {
+    const norm = k.replace(/^\uFEFF/, '').trim().toLowerCase();
+    if (!lowerMap.has(norm)) lowerMap.set(norm, v);
+  }
+  for (const cand of candidates) {
+    const val = lowerMap.get(cand.trim().toLowerCase());
+    if (val !== undefined) return val;
+  }
+  return undefined;
+}
+
+function pickFirstNonEmpty(values: any[]): string {
+  for (const v of values) {
+    if (v === undefined || v === null) continue;
+    const s = String(v).trim();
+    if (s !== '') return s;
+  }
+  return '';
+}
+
+function stripLeadingQualCode(raw: string): string {
+  return raw
+    .replace(/^\[\d{4}\]\s*/, '')
+    .replace(/^\d{4}\s*\|\s*/, '')
+    .replace(/^\d{4}\s*-\s*/, '')
+    .replace(/^\d{4}$/, '')
+    .trim();
+}
+
+export function extractCommodityMetaFromTabel71Row(
+  row: Record<string, any>,
+  qualCode: string
+): CommodityMetaOverride | null {
+  if (!qualCode) return null;
+
+  const kqr = String(
+    getFieldCI(row, ['kode kualitas rekon', 'kode_kualitas_rekon', 'Kode Kualitas Rekon']) ?? ''
+  ).trim();
+  const kr = String(
+    getFieldCI(row, ['kualitas rekon', 'Kualitas Rekon']) ?? ''
+  ).trim();
+  const commName = String(
+    getFieldCI(row, ['Nama Komoditas', 'Komoditas', 'komoditas']) ?? ''
+  ).trim();
+  const qualName = String(
+    getFieldCI(row, ['Nama Kualitas', 'kualitas']) ?? ''
+  ).trim();
+  const kdRaw = String(
+    getFieldCI(row, ['Kode Kualitas Data', 'kode_kualitas_data', 'Kualitas Data']) ?? ''
+  ).trim();
+
+  let nama = '';
+
+  const fromKqr = stripLeadingQualCode(kqr);
+  if (fromKqr) {
+    nama = fromKqr;
+  } else {
+    const fromKr = stripLeadingQualCode(kr);
+    if (fromKr) {
+      nama = fromKr;
+    } else if (commName || qualName) {
+      if (commName && qualName) {
+        nama = qualName.toLowerCase().startsWith(commName.toLowerCase())
+          ? qualName
+          : `${commName} ${qualName}`.trim();
+      } else {
+        nama = (commName || qualName).trim();
+      }
+    } else if (kdRaw) {
+      const cleanedKd = stripLeadingQualCode(kdRaw).split('|')[0]?.trim() || '';
+      if (cleanedKd) nama = cleanedKd;
+    }
+  }
+
+  if (!nama) return null;
+
+  const satuan = String(
+    getFieldCI(row, ['Satuan Standar', 'satuan_standar', 'Satuan', 'satuan']) ?? ''
+  ).trim();
+  const kategori = String(
+    getFieldCI(row, ['Jenis Kuesioner', 'jenis_kuesioner', 'Kategori', 'kategori']) ?? ''
+  ).trim();
+
+  return {
+    kode: qualCode,
+    nama,
+    ...(satuan ? { satuan } : {}),
+    ...(kategori ? { kategori } : {})
+  };
+}
+
 /**
  * Helper to resolve normalized 4-digit quality code from any template row.
- * Handles both fixed `[xxxx]` codes and legacy/untagged rows for:
- * - Seng Plat BJLS 20 -> 1402
- * - Seng Plat BJLS 30 -> 1404
- * - Atap Metal Genteng Metal (0.25 mm) -> 5001
- * - Atap Metal Genteng Metal (0.30 mm) -> 5002
- * - Atap Metal Atap Spandex (0.30 mm) -> 5003
- * - Upah Mandor -> 6001
+ * Mengutamakan lookup berbasis Kode Kualitas Data (kode 4 digit) pada
+ * Template Data Tahun Berjalan maupun Data Tahun Sebelumnya, dengan
+ * fallback kanonik teks untuk baris legacy tanpa kode 4 digit.
  */
 export function resolveRowQualCode(row: Record<string, any>): string {
-  const kd = String(row['Kualitas Data'] ?? '').trim();
-  const kr = String(row['Kualitas Rekon'] ?? '').trim();
-  const kqr = String(
-    row['kode kualitas rekon'] ??
-    row['Kode Kualitas 1'] ??
-    row['Kode Kualitas 2'] ??
-    row['Kode Kualitas'] ??
-    row['kode_kualitas_rekon'] ??
-    ''
+  const kkd = String(
+    getFieldCI(row, ['Kode Kualitas Data', 'kode_kualitas_data', 'kode kualitas data']) ?? ''
   ).trim();
-  const commName = String(row['Nama Komoditas'] ?? row['Komoditas'] ?? '').trim();
-  const qualName = String(row['Nama Kualitas'] ?? row['kualitas rekon'] ?? '').trim();
+  const kd = String(getFieldCI(row, ['Kualitas Data']) ?? '').trim();
+  const kqr = String(
+    getFieldCI(row, [
+      'kode kualitas rekon',
+      'kode_kualitas_rekon',
+      'Kode Kualitas Rekon',
+      'Kode Kualitas 1',
+      'Kode Kualitas 2',
+      'Kode Kualitas',
+      'kode_kualitas'
+    ]) ?? ''
+  ).trim();
+  const kr = String(getFieldCI(row, ['Kualitas Rekon', 'kualitas rekon']) ?? '').trim();
 
-  const combinedText = `${kd} ${kr} ${kqr} ${commName} ${qualName}`.toLowerCase();
+  // 1. Strict 4-digit code lookup (prioritizing Kode Kualitas Data / Kualitas Data, then kode kualitas rekon / Kualitas Rekon)
+  for (const field of [kkd, kd, kqr, kr]) {
+    if (!field) continue;
+    const match = field.match(/(?:^|\[|\b)(\d{4})(?:\]|\s*\||\b)/);
+    if (match) return match[1];
+  }
 
-  // Canonical overrides matching official IKK template codes
+  // 2. Fallback canonical overrides only when explicit 4-digit quality code is absent
+  const commName = String(getFieldCI(row, ['Nama Komoditas', 'Komoditas']) ?? '').trim();
+  const qualName = String(getFieldCI(row, ['Nama Kualitas', 'kualitas rekon']) ?? '').trim();
+  const combinedText = `${kkd} ${kd} ${kqr} ${kr} ${commName} ${qualName}`.toLowerCase();
+
   if (combinedText.includes('bjls 20')) return '1402';
   if (combinedText.includes('bjls 30')) return '1404';
   if (combinedText.includes('genteng metal') && combinedText.includes('0.25')) return '5001';
   if (combinedText.includes('genteng metal') && combinedText.includes('0.30')) return '5002';
   if (combinedText.includes('spandex') && combinedText.includes('0.30')) return '5003';
   if (combinedText.includes('upah mandor')) return '6001';
-
-  // Extract 4-digit code from IKK Responden ("1402 | ...") or Webentry / Tabel 7.1 ("[1402] ...")
-  for (const field of [kd, kr, kqr]) {
-    if (!field) continue;
-    const match = field.match(/(?:^|\[|\b)(\d{4})(?:\]|\s*\||\b)/);
-    if (match) return match[1];
-  }
 
   return '';
 }
@@ -254,32 +354,32 @@ export function processTabel71Upload(
   const detectedCommoditiesSet = new Set<string>();
 
   // Detect whether file explicitly uses 2026/2027 headers so I-2027 never falls back to legacy I-2026
-  const hasCycle2027Headers = rows.some((r) => {
-    const keys = Object.keys(r);
-    return keys.some((k) =>
-      k === 'III-2026' ||
-      k === 'IV-2026' ||
-      k === 'I-2027' ||
-      k === 'II-2027' ||
-      k === 'TW III 2026' ||
-      k === 'TW IV 2026' ||
-      k === 'TW I 2027' ||
-      k === 'TW II 2027' ||
-      k === 'tw3_2026' ||
-      k === 'tw4_2026' ||
-      k === 'tw1_2027' ||
-      k === 'tw2_2027'
-    );
-  });
+  const cycle2027HeaderSet = new Set([
+    'iii-2026',
+    'iv-2026',
+    'i-2027',
+    'ii-2027',
+    'tw iii 2026',
+    'tw iv 2026',
+    'tw i 2027',
+    'tw ii 2027',
+    'tw3_2026',
+    'tw4_2026',
+    'tw1_2027',
+    'tw2_2027'
+  ]);
+  const hasCycle2027Headers = rows.some((r) =>
+    Object.keys(r).some((k) => cycle2027HeaderSet.has(k.trim().toLowerCase()))
+  );
 
   // Group raw rows by target kabupaten
   const groupedRows: Record<string, any[]> = {};
 
   rows.forEach((row) => {
     const qualCode = resolveRowQualCode(row);
-    const kqr = String(row['kode kualitas rekon'] || row['kualitas rekon'] || '').trim();
-    const comm = String(row['Nama Komoditas'] || row['Komoditas'] || row['komoditas'] || '').trim();
-    const qual = String(row['Nama Kualitas'] || '').trim();
+    const kqr = String(getFieldCI(row, ['kode kualitas rekon', 'kualitas rekon']) ?? '').trim();
+    const comm = String(getFieldCI(row, ['Nama Komoditas', 'Komoditas', 'komoditas']) ?? '').trim();
+    const qual = String(getFieldCI(row, ['Nama Kualitas']) ?? '').trim();
     const label = qualCode ? `[${qualCode}] ${comm || qual}` : (kqr || comm);
     if (label) detectedCommoditiesSet.add(label);
 
@@ -290,10 +390,11 @@ export function processTabel71Upload(
 
       const matchesCode = Boolean(filterCode && qualCode && qualCode === filterCode);
       const matchesName =
-        kqr.toLowerCase().includes(q) ||
-        comm.toLowerCase().includes(q) ||
-        qual.toLowerCase().includes(q) ||
-        (comm && q.includes(comm.toLowerCase()));
+        !qualCode &&
+        (kqr.toLowerCase().includes(q) ||
+          comm.toLowerCase().includes(q) ||
+          qual.toLowerCase().includes(q) ||
+          (comm && q.includes(comm.toLowerCase())));
 
       if (!matchesCode && !matchesName) {
         return;
@@ -301,20 +402,11 @@ export function processTabel71Upload(
     }
 
     const rawCode = String(
-      row['Kode Kabupaten/Kota'] ??
-      row['Kode K'] ??
-      row['Kode Kab'] ??
-      row['Kode'] ??
-      row['kode'] ??
-      ''
+      getFieldCI(row, ['Kode Kabupaten/Kota', 'Kode K', 'Kode Kab', 'Kode', 'kode']) ?? ''
     ).trim();
 
     const rawName = String(
-      row['Nama Kabupaten/Kota'] ??
-      row['Nama K'] ??
-      row['Kabupaten'] ??
-      row['nama'] ??
-      ''
+      getFieldCI(row, ['Nama Kabupaten/Kota', 'Nama K', 'Kabupaten', 'nama']) ?? ''
     ).trim();
 
     const matched = findMatchingKabupaten(rawCode, rawName, updatedList);
@@ -353,25 +445,28 @@ export function processTabel71Upload(
 
     kabRows.forEach((r, idx) => {
       const pTw3 = hasCycle2027Headers
-        ? parsePrice(r['III-2026'] ?? r['TW III 2026'] ?? r['tw3_2026'] ?? r['III 2026'])
-        : parsePrice(r['III-2026'] ?? r['TW III 2026'] ?? r['tw3_2026'] ?? r['III 2026'] ?? r['III-2025'] ?? r['TW III 2025']);
+        ? parsePrice(getFieldCI(r, ['III-2026', 'TW III 2026', 'tw3_2026', 'III 2026']))
+        : parsePrice(getFieldCI(r, ['III-2026', 'TW III 2026', 'tw3_2026', 'III 2026', 'III-2025', 'TW III 2025']));
       const pTw4 = hasCycle2027Headers
-        ? parsePrice(r['IV-2026'] ?? r['TW IV 2026'] ?? r['tw4_2026'] ?? r['IV 2026'])
-        : parsePrice(r['IV-2026'] ?? r['TW IV 2026'] ?? r['tw4_2026'] ?? r['IV 2026'] ?? r['IV-2025'] ?? r['TW IV 2025']);
+        ? parsePrice(getFieldCI(r, ['IV-2026', 'TW IV 2026', 'tw4_2026', 'IV 2026']))
+        : parsePrice(getFieldCI(r, ['IV-2026', 'TW IV 2026', 'tw4_2026', 'IV 2026', 'IV-2025', 'TW IV 2025']));
       const pTw1 = hasCycle2027Headers
-        ? parsePrice(r['I-2027'] ?? r['TW I 2027'] ?? r['tw1_2027'] ?? r['I 2027'])
-        : parsePrice(r['I-2027'] ?? r['TW I 2027'] ?? r['tw1_2027'] ?? r['I 2027'] ?? r['I-2026'] ?? r['TW I 2026']);
+        ? parsePrice(getFieldCI(r, ['I-2027', 'TW I 2027', 'tw1_2027', 'I 2027']))
+        : parsePrice(getFieldCI(r, ['I-2027', 'TW I 2027', 'tw1_2027', 'I 2027', 'I-2026', 'TW I 2026']));
       const pTw2 = hasCycle2027Headers
-        ? parsePrice(r['II-2027'] ?? r['TW II 2027'] ?? r['tw2_2027'] ?? r['II 2027'])
-        : parsePrice(r['II-2027'] ?? r['TW II 2027'] ?? r['tw2_2027'] ?? r['II 2027'] ?? r['II-2026'] ?? r['TW II 2026']);
+        ? parsePrice(getFieldCI(r, ['II-2027', 'TW II 2027', 'tw2_2027', 'II 2027']))
+        : parsePrice(getFieldCI(r, ['II-2027', 'TW II 2027', 'tw2_2027', 'II 2027', 'II-2026', 'TW II 2026']));
 
-      const resName = String(
-        r['Nama Responden'] ?? r['Nama R'] ?? r['Responden'] ?? `Responden ${idx + 1}`
-      ).trim().toUpperCase();
+      const resName = (
+        pickFirstNonEmpty([getFieldCI(r, ['Nama Responden', 'Nama R', 'Responden'])]) ||
+        `Responden ${idx + 1}`
+      ).toUpperCase();
 
-      const resMerk = String(
-        r['Nama Merek'] ?? r['Nama Kualitas'] ?? r['kualitas rekon'] ?? r['Merek'] ?? 'Standar'
-      ).trim();
+      const resMerk =
+        pickFirstNonEmpty([
+          getFieldCI(r, ['Nama Merek', 'Merek']),
+          getFieldCI(r, ['Nama Kualitas', 'kualitas rekon'])
+        ]) || 'Standar';
 
       if (resMerk && (pTw3 > 0 || pTw4 > 0 || pTw1 > 0 || pTw2 > 0)) {
         brandCounts[resMerk] = (brandCounts[resMerk] || 0) + 1;
@@ -527,11 +622,11 @@ export function processIKKRespondenUpload(
   const groupedRows: Record<string, any[]> = {};
 
   rows.forEach((row) => {
-    // Lookup from Kualitas Data (Primary as requested) and Kualitas Rekon / Komoditas (Fallback)
+    // Lookup strictly by Kode Kualitas Data / Kualitas Data / Kode Kualitas Rekon
     const qualCode = resolveRowQualCode(row);
-    const kd = String(row['Kualitas Data'] || '').trim();
-    const kr = String(row['Kualitas Rekon'] || '').trim();
-    const comm = String(row['Komoditas'] || row['Nama Komoditas'] || '').trim();
+    const kd = String(getFieldCI(row, ['Kode Kualitas Data', 'Kualitas Data']) ?? '').trim();
+    const kr = String(getFieldCI(row, ['Kualitas Rekon', 'kode kualitas rekon']) ?? '').trim();
+    const comm = String(getFieldCI(row, ['Komoditas', 'Nama Komoditas']) ?? '').trim();
 
     if (kd) detectedCommoditiesSet.add(kd);
     else if (kr) detectedCommoditiesSet.add(kr);
@@ -543,15 +638,17 @@ export function processIKKRespondenUpload(
       const filterCode = filterCodeMatch ? filterCodeMatch[1] : '';
 
       const matchCode = Boolean(filterCode && qualCode && qualCode === filterCode);
-      const matchKD = kd.toLowerCase().includes(q);
-      const matchKR = kr.toLowerCase().includes(q);
-      const matchComm = comm.toLowerCase().includes(q);
-      if (!matchCode && !matchKD && !matchKR && !matchComm) {
+      const matchTextFallback =
+        !qualCode &&
+        (kd.toLowerCase().includes(q) || kr.toLowerCase().includes(q) || comm.toLowerCase().includes(q));
+      if (!matchCode && !matchTextFallback) {
         return;
       }
     }
 
-    const rawKota = String(row['Kota'] || row['Kabupaten'] || row['Kota / Kab'] || '').trim();
+    const rawKota = String(
+      getFieldCI(row, ['Kota', 'Kabupaten', 'Kota / Kab', 'Kode Kabupaten/Kota', 'Nama Kabupaten/Kota']) ?? ''
+    ).trim();
     const matched = findMatchingKabupaten(rawKota, rawKota, updatedList);
     if (matched) {
       if (!groupedRows[matched.kode]) groupedRows[matched.kode] = [];
@@ -573,11 +670,22 @@ export function processIKKRespondenUpload(
     const tw1_26_prices: number[] = [];
     const tw2_26_prices: number[] = [];
     const allLaluPrices: number[] = [];
+    const merekAcuanSet = new Set<string>();
+    const finalRespSet = new Set<string>();
 
     kabRows.forEach((r) => {
-      const tahun = Number(r['Tahun'] || r['tahun'] || 0);
-      const tw = Number(r['Triwulan'] || r['triwulan'] || r['TW'] || 0);
-      const harga = parsePrice(r['Harga'] ?? r['harga'] ?? r['Nilai']);
+      const tahun = Number(getFieldCI(r, ['Tahun', 'tahun']) || 0);
+      const tw = Number(getFieldCI(r, ['Triwulan', 'triwulan', 'TW']) || 0);
+      const harga = parsePrice(getFieldCI(r, ['Harga', 'harga', 'Nilai']));
+      const kdRaw = String(getFieldCI(r, ['Kode Kualitas Data', 'Kualitas Data']) ?? '').trim();
+      const kdParts = kdRaw.split('|').map((s) => s.trim());
+      if (kdParts.length >= 3 && kdParts[2] && kdParts[2] !== '-') {
+        merekAcuanSet.add(kdParts[2].toUpperCase());
+      }
+      const respNameRaw = String(getFieldCI(r, ['Nama Responden', 'Responden', 'responden']) ?? '').trim();
+      if (respNameRaw && respNameRaw !== '-') {
+        finalRespSet.add(respNameRaw.toUpperCase());
+      }
 
       if (harga > 0) {
         if (tahun === 2025 && tw === 3) {
@@ -623,6 +731,8 @@ export function processIKKRespondenUpload(
     kab.hargaTw2_2026 = avgTw2_26;
     kab.harga2026 = newHarga2026;
     kab.rasio = newRasio;
+    kab.merekAcuan2026 = Array.from(merekAcuanSet);
+    kab.finalRespondents2026 = Array.from(finalRespSet);
 
     const diff = newHarga2026 - oldHarga2026;
     const percentDiff = oldHarga2026 > 0 ? parseFloat(((diff / oldHarga2026) * 100).toFixed(2)) : 0;
@@ -679,42 +789,40 @@ export function processIKKWebentryUpload(
   const groupedRows: Record<string, any[]> = {};
 
   rows.forEach((row) => {
-    // Extract commodity / quality code from "kode kualitas rekon" (with canonical code normalization)
+    // Extract commodity / quality code strictly by 4-digit quality code
     const rawQualCodeField = String(
-      row['kode kualitas rekon'] ??
-      row['Kode Kualitas 1'] ??
-      row['Kode Kualitas'] ??
-      row['kode_kualitas_rekon'] ??
-      ''
+      getFieldCI(row, [
+        'Kode Kualitas Data',
+        'Kualitas Data',
+        'kode kualitas rekon',
+        'Kode Kualitas Rekon',
+        'Kode Kualitas 1',
+        'Kode Kualitas',
+        'kode_kualitas_rekon'
+      ]) ?? ''
     ).trim();
 
     const qualCode = resolveRowQualCode(row);
 
     const commName = String(
-      row['kualitas rekon'] ??
-      row['Nama Komoditas'] ??
-      row['Nama Kualitas'] ??
-      row['Komoditas'] ??
-      ''
+      getFieldCI(row, ['kualitas rekon', 'Nama Komoditas', 'Nama Kualitas', 'Komoditas']) ?? ''
     ).trim();
 
     const qualDisplay = qualCode ? `[${qualCode}] ${commName || rawQualCodeField}` : commName || rawQualCodeField;
     if (qualDisplay) detectedCommoditiesSet.add(qualDisplay);
 
-    // Apply commodity filter if specified
+    // Apply commodity filter strictly by 4-digit code when available
     if (commodityFilter && commodityFilter !== 'ALL') {
       const q = commodityFilter.trim().toLowerCase();
       const filterCodeMatch = q.match(/\[?(\d{4})\]?/);
       const filterCode = filterCodeMatch ? filterCodeMatch[1] : '';
 
       let isMatch = false;
-      if (filterCode && qualCode && qualCode === filterCode) {
-        isMatch = true;
+      if (filterCode && qualCode) {
+        isMatch = qualCode === filterCode;
       } else if (qualCode && q.includes(qualCode) && qualCode.length >= 4) {
         isMatch = true;
-      } else if (rawQualCodeField.toLowerCase().includes(q)) {
-        isMatch = true;
-      } else if (commName.toLowerCase().includes(q)) {
+      } else if (!qualCode && (rawQualCodeField.toLowerCase().includes(q) || commName.toLowerCase().includes(q))) {
         isMatch = true;
       }
 
@@ -722,18 +830,11 @@ export function processIKKWebentryUpload(
     }
 
     const rawKabCode = String(
-      row['Kode Kabupaten/Kota'] ??
-      row['Kode Kab'] ??
-      row['Kode'] ??
-      ''
+      getFieldCI(row, ['Kode Kabupaten/Kota', 'Kode Kab', 'Kode']) ?? ''
     ).trim();
 
     const rawKabName = String(
-      row['Nama Kabupaten/Kota'] ??
-      row['Nama Kab'] ??
-      row['Kabupaten'] ??
-      row['Kota'] ??
-      ''
+      getFieldCI(row, ['Nama Kabupaten/Kota', 'Nama Kab', 'Kabupaten', 'Kota']) ?? ''
     ).trim();
 
     const matched = findMatchingKabupaten(rawKabCode, rawKabName, updatedList);
@@ -760,11 +861,11 @@ export function processIKKWebentryUpload(
 
     kabRows.forEach((r) => {
       // Parse quarter prices (III-2025, IV-2025, I-2026, II-2026)
-      const p3 = parsePrice(r['III-2025'] ?? r['Harga TW III 2025'] ?? r['TW3_2025'] ?? r['tw3_2025']);
-      const p4 = parsePrice(r['IV-2025'] ?? r['Harga TW IV 2025'] ?? r['TW4_2025'] ?? r['tw4_2025']);
-      const p1 = parsePrice(r['I-2026'] ?? r['Harga TW I 2026'] ?? r['TW1_2026'] ?? r['tw1_2026']);
-      const p2 = parsePrice(r['II-2026'] ?? r['Harga TW II 2026'] ?? r['TW2_2026'] ?? r['tw2_2026']);
-      const pDirect = parsePrice(r['Harga 2026'] ?? r['Harga2026'] ?? r['Nilai 2026']);
+      const p3 = parsePrice(getFieldCI(r, ['III-2025', 'Harga TW III 2025', 'TW3_2025', 'tw3_2025']));
+      const p4 = parsePrice(getFieldCI(r, ['IV-2025', 'Harga TW IV 2025', 'TW4_2025', 'tw4_2025']));
+      const p1 = parsePrice(getFieldCI(r, ['I-2026', 'Harga TW I 2026', 'TW1_2026', 'tw1_2026']));
+      const p2 = parsePrice(getFieldCI(r, ['II-2026', 'Harga TW II 2026', 'TW2_2026', 'tw2_2026']));
+      const pDirect = parsePrice(getFieldCI(r, ['Harga 2026', 'Harga2026', 'Nilai 2026']));
 
       if (p3 > 0) { tw3_list.push(p3); allPrices.push(p3); }
       if (p4 > 0) { tw4_list.push(p4); allPrices.push(p4); }
@@ -931,7 +1032,9 @@ export function processDual2026Merge(
         hargaTw4_2025: fromRekon.hargaTw4_2025,
         hargaTw1_2026: fromRekon.hargaTw1_2026,
         hargaTw2_2026: fromRekon.hargaTw2_2026,
-        rasio: fromRekon.rasio
+        rasio: fromRekon.rasio,
+        merekAcuan2026: fromRekon.merekAcuan2026 || [],
+        finalRespondents2026: fromRekon.finalRespondents2026 || []
       };
     } else if (hasWeb) {
       affectedKabCount++;
@@ -955,7 +1058,9 @@ export function processDual2026Merge(
         hargaTw4_2025: fromWeb.hargaTw4_2025,
         hargaTw1_2026: fromWeb.hargaTw1_2026,
         hargaTw2_2026: fromWeb.hargaTw2_2026,
-        rasio: fromWeb.rasio
+        rasio: fromWeb.rasio,
+        merekAcuan2026: [],
+        finalRespondents2026: []
       };
     }
 
@@ -967,7 +1072,9 @@ export function processDual2026Merge(
       hargaTw4_2025: 0,
       hargaTw1_2026: 0,
       hargaTw2_2026: 0,
-      rasio: 0
+      rasio: 0,
+      merekAcuan2026: [],
+      finalRespondents2026: []
     };
   });
 
@@ -1008,11 +1115,26 @@ export function processMultiCommodityUpload(params: {
   } = params;
 
   const bucketByCode = new Map<string, any[]>();
+  const commodityMetadata: Record<string, CommodityMetaOverride> = {};
+
   rows.forEach((r) => {
     const code = resolveRowQualCode(r);
     if (!code) return;
     if (!bucketByCode.has(code)) bucketByCode.set(code, []);
     bucketByCode.get(code)!.push(r);
+
+    if (mode === 'tabel71') {
+      const meta = extractCommodityMetaFromTabel71Row(r, code);
+      if (meta) {
+        const existing = commodityMetadata[code];
+        if (!existing) {
+          commodityMetadata[code] = meta;
+        } else {
+          if (!existing.satuan && meta.satuan) existing.satuan = meta.satuan;
+          if (!existing.kategori && meta.kategori) existing.kategori = meta.kategori;
+        }
+      }
+    }
   });
 
   const webBucketByCode = new Map<string, any[]>();
@@ -1022,6 +1144,24 @@ export function processMultiCommodityUpload(params: {
     if (!webBucketByCode.has(code)) webBucketByCode.set(code, []);
     webBucketByCode.get(code)!.push(r);
   });
+
+  // Include any new quality codes from uploaded Templat Tahun Berjalan that aren't yet in komoditasList
+  const knownCodeSet = new Set(komoditasList.map((k) => k.kode));
+  const mergedKomoditasList: Komoditas[] = [...komoditasList];
+  if (mode === 'tabel71') {
+    Array.from(bucketByCode.keys())
+      .filter((code) => !knownCodeSet.has(code))
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((code) => {
+        const meta = commodityMetadata[code];
+        mergedKomoditasList.push({
+          kode: code,
+          nama: meta?.nama || `Komoditas ${code}`,
+          satuan: meta?.satuan || 'unit',
+          kategori: meta?.kategori || 'Lainnya'
+        });
+      });
+  }
 
   const isMultiCommodity =
     mode === 'dual_2026_merge' || bucketByCode.size > 1;
@@ -1034,16 +1174,39 @@ export function processMultiCommodityUpload(params: {
   let firstNonEmptyResult: { kode: string; res: ParseResult } | null = null;
 
   const targetList = isMultiCommodity
-    ? komoditasList
+    ? mergedKomoditasList
     : (() => {
         const singleCode = bucketByCode.size === 1 ? Array.from(bucketByCode.keys())[0] : selectedKomoditasKode;
-        const found = komoditasList.find((k) => k.kode === singleCode);
-        return found ? [found] : komoditasList.filter((k) => k.kode === selectedKomoditasKode);
+        const found = mergedKomoditasList.find((k) => k.kode === singleCode);
+        return found ? [found] : mergedKomoditasList.filter((k) => k.kode === selectedKomoditasKode);
       })();
+
+  const buildZeroedBaseList = (komKode: string): KabupatenRekon[] =>
+    fallbackList.map((k) => ({
+      ...k,
+      id: `${provinsiKode}_${k.kode}_${komKode}`,
+      harga2027: 0,
+      hargaTw3_2026: 0,
+      hargaTw4_2026: 0,
+      hargaTw1_2027: 0,
+      hargaTw2_2027: 0,
+      harga2026: 0,
+      hargaTw3_2025: 0,
+      hargaTw4_2025: 0,
+      hargaTw1_2026: 0,
+      hargaTw2_2026: 0,
+      koefisienVariasi: 0,
+      rasio: 0,
+      namaKualitas: '-',
+      catatan: '',
+      statusRekon: 'belum_rekon',
+      isVerified: false,
+      respondents: []
+    }));
 
   targetList.forEach((kom) => {
     const key = `${provinsiKode}_${kom.kode}`;
-    const baseList = database[key] || fallbackList;
+    const baseList = database[key] || buildZeroedBaseList(kom.kode);
     const rowsForKom = bucketByCode.get(kom.kode) || [];
     const webForKom = webBucketByCode.get(kom.kode) || [];
 
@@ -1105,7 +1268,8 @@ export function processMultiCommodityUpload(params: {
     updatedCommoditiesCount,
     totalCommoditiesInFile: combinedCommoditiesCount,
     totalAffectedKabEntries,
-    isMultiCommodity
+    isMultiCommodity,
+    ...(mode === 'tabel71' && Object.keys(commodityMetadata).length > 0 ? { commodityMetadata } : {})
   };
 }
 

@@ -19,6 +19,7 @@ import { SimulasiRankingView } from './components/SimulasiRankingView';
 import { PROVINSI_LIST, KOMODITAS_LIST, INITIAL_KABUPATEN_DATA } from './data/mockData';
 import {
   ActiveViewType,
+  CommodityMetaOverride,
   KabupatenRekon,
   RespondenData,
   Komoditas,
@@ -29,12 +30,14 @@ import {
   TipeSewaAlat,
   LkSewaAlatData,
   RekondaGlobalSettings,
-  DEFAULT_GLOBAL_SETTINGS
+  DEFAULT_GLOBAL_SETTINGS,
+  ComparisonMode
 } from './types/rekonda';
 import { AppDocument } from './types/documents';
 import { RegisteredAdmin } from './types/userAdmin';
 import { calculateStats, getDominantBrand, formatRupiahNumber } from './utils/formatters';
 import { getSewaAlatKabStatus, isSewaAlatKomoditas } from './utils/sewaAlatCalculator';
+import { projectKabupatenByComparisonMode } from './utils/rekonComparison';
 import {
   exportCurrentTableToExcel,
   exportSeluruhRespondenToExcel,
@@ -160,10 +163,47 @@ export default function App() {
     showToast('Pengaturan tampilan dikembalikan ke standar.');
   };
 
+  // Dynamic Commodity Names & Metadata synced from Templat Data Tahun Berjalan (`rekonda_settings.commodity_names`)
+  const [commodityNameOverrides, setCommodityNameOverrides] = useState<
+    Record<string, CommodityMetaOverride>
+  >({});
+
+  const komoditasList = useMemo<Komoditas[]>(() => {
+    const mergedMap = new Map<string, Komoditas>();
+    KOMODITAS_LIST.forEach((k) => {
+      const ov = commodityNameOverrides[k.kode];
+      mergedMap.set(
+        k.kode,
+        ov && ov.nama
+          ? {
+              kode: k.kode,
+              nama: ov.nama,
+              satuan: ov.satuan || k.satuan,
+              kategori: ov.kategori || k.kategori
+            }
+          : k
+      );
+    });
+    Object.values(commodityNameOverrides).forEach((ov) => {
+      if (ov?.kode && !mergedMap.has(ov.kode)) {
+        mergedMap.set(ov.kode, {
+          kode: ov.kode,
+          nama: ov.nama || `Komoditas ${ov.kode}`,
+          satuan: ov.satuan || 'unit',
+          kategori: ov.kategori || 'Lainnya'
+        });
+      }
+    });
+    return Array.from(mergedMap.values()).sort((a, b) => a.kode.localeCompare(b.kode));
+  }, [commodityNameOverrides]);
+
   // Selected Province & Commodity
   const [selectedProvinsi, setSelectedProvinsi] = useState<Provinsi>(PROVINSI_LIST[0]);
   const [komoditasIndex, setKomoditasIndex] = useState<number>(0);
-  const selectedKomoditas = KOMODITAS_LIST[komoditasIndex] || KOMODITAS_LIST[0];
+  const selectedKomoditas = komoditasList[komoditasIndex] || komoditasList[0];
+
+  // Comparison mode for main table & anomaly table (Semua Responden vs Filter Merek Acuan '26 vs Apple-to-Apple Final '26)
+  const [comparisonMode, setComparisonMode] = useState<ComparisonMode>('all');
 
   // Helper to ensure default template notes are blank, prices are cleaned, and status is 2-state
   const sanitizeCatatan = (db: Record<string, KabupatenRekon[]>): Record<string, KabupatenRekon[]> => {
@@ -328,11 +368,12 @@ export default function App() {
     [currentUser.email, currentUser.name]
   );
 
-  // Fetch global & display settings from Supabase `rekonda_settings`
+  // Fetch global, display, & commodity name settings from Supabase `rekonda_settings`
   const fetchSettings = useCallback(
     async (fromRealtime: boolean = false) => {
       try {
-        const { globalConfig, displayDefaults } = await fetchRekondaSettingsFromSupabase();
+        const { globalConfig, displayDefaults, commodityNames } =
+          await fetchRekondaSettingsFromSupabase();
         if (globalConfig) {
           setGlobalSettings({
             ...DEFAULT_GLOBAL_SETTINGS,
@@ -345,8 +386,11 @@ export default function App() {
             setDisplaySettings(displayDefaults as DisplaySettings);
           }
         }
+        if (commodityNames && typeof commodityNames === 'object') {
+          setCommodityNameOverrides(commodityNames);
+        }
         if (fromRealtime && Date.now() - lastLocalSettingsMutationAtRef.current > 2000) {
-          showToast('Pengaturan aplikasi diperbarui otomatis dari perangkat lain.');
+          showToast('Pengaturan & penamaan komoditas diperbarui otomatis dari perangkat lain.');
         }
       } catch (err) {
         console.warn('Supabase rekonda_settings fetch notice:', err);
@@ -709,6 +753,15 @@ export default function App() {
       };
     });
   }, [database, currentKey, selectedProvinsi.kode, selectedKomoditas]);
+
+  // Projected dataset for display & comparison mode (non-destructive: keeps raw respondents untouched)
+  const projectedKabupatenData = useMemo(
+    () =>
+      currentKabupatenData.map((k) =>
+        projectKabupatenByComparisonMode(k, selectedKomoditas.kode, comparisonMode)
+      ),
+    [currentKabupatenData, selectedKomoditas.kode, comparisonMode]
+  );
 
   // Recalculate kabupaten metrics according to IKK cross-year 2026/2027 specs
   // For Sewa Alat (5101 - 5803): main table aggregates automatically ONLY once ALL respondents are pure rent (sewa_murni or LK-computed all_in)
@@ -1231,11 +1284,15 @@ export default function App() {
     }
   }, [activeView, currentUser.isOwner, currentUser.role]);
 
-  // Upload Apply Data (Supports Multi-Commodity & Single-Commodity updates)
+  // Upload Apply Data (Supports Multi-Commodity & Single-Commodity updates + Dynamic Commodity Naming from Tabel 7.1)
   const handleApplyUploadedData = (
     updatedDatabaseSlice: Record<string, KabupatenRekon[]>,
     sheetType: 'rekonda26' | 'tabel71',
-    summary?: { updatedCommoditiesCount: number; isMultiCommodity: boolean }
+    summary?: {
+      updatedCommoditiesCount: number;
+      isMultiCommodity: boolean;
+      commodityMetadata?: Record<string, CommodityMetaOverride>;
+    }
   ) => {
     const recomputedSlice: Record<string, KabupatenRekon[]> = {};
 
@@ -1257,6 +1314,22 @@ export default function App() {
               : 0;
         }
         return metric;
+      });
+    }
+
+    if (
+      sheetType === 'tabel71' &&
+      summary?.commodityMetadata &&
+      Object.keys(summary.commodityMetadata).length > 0
+    ) {
+      const mergedNames: Record<string, CommodityMetaOverride> = {
+        ...commodityNameOverrides,
+        ...summary.commodityMetadata
+      };
+      setCommodityNameOverrides(mergedNames);
+      lastLocalSettingsMutationAtRef.current = Date.now();
+      upsertRekondaSettingToSupabase('commodity_names', mergedNames).catch((err) => {
+        console.warn('Supabase commodity_names sync notice:', err);
       });
     }
 
@@ -1298,18 +1371,18 @@ export default function App() {
           ? `Data Harga Tahun Sebelumnya untuk ${countLabel} komoditas/kualitas berhasil diperbarui ke kolom Harga 2026!`
           : 'Data tahun sebelumnya berhasil disinkronkan ke kolom Harga 2026!'
         : summary?.isMultiCommodity
-        ? `Data Harga Tahun Berjalan untuk ${countLabel} komoditas/kualitas berhasil diperbarui ke kolom Harga 2027!`
-        : 'Data Harga Tahun Berjalan berhasil diperbarui ke kolom Harga 2027!'
+        ? `Data Harga Tahun Berjalan & penamaan untuk ${countLabel} komoditas/kualitas berhasil diperbarui!`
+        : 'Data Harga Tahun Berjalan & nama komoditas berhasil diperbarui ke kolom Harga 2027!'
     );
   };
 
   // Stepper handlers
   const handlePrevKomoditas = () => {
-    setKomoditasIndex((prev) => (prev > 0 ? prev - 1 : KOMODITAS_LIST.length - 1));
+    setKomoditasIndex((prev) => (prev > 0 ? prev - 1 : komoditasList.length - 1));
   };
 
   const handleNextKomoditas = () => {
-    setKomoditasIndex((prev) => (prev < KOMODITAS_LIST.length - 1 ? prev + 1 : 0));
+    setKomoditasIndex((prev) => (prev < komoditasList.length - 1 ? prev + 1 : 0));
   };
 
   const handleTampilkan = async () => {
@@ -1412,26 +1485,26 @@ export default function App() {
 
   // Excel exports
   const handleExportExcelTable = () => {
-    exportCurrentTableToExcel(selectedProvinsi, selectedKomoditas, currentKabupatenData);
+    exportCurrentTableToExcel(selectedProvinsi, selectedKomoditas, projectedKabupatenData);
     showToast('Tabel berhasil diekspor ke file Excel (.xlsx).');
   };
 
   const handleExportSeluruhKualitas = () => {
-    exportSeluruhKualitasToExcel(selectedProvinsi, KOMODITAS_LIST, database);
-    showToast('Seluruh data harga dari 89 kualitas/komoditas berhasil diekspor ke Excel (.xlsx).');
+    exportSeluruhKualitasToExcel(selectedProvinsi, komoditasList, database);
+    showToast(`Seluruh data harga dari ${komoditasList.length} kualitas/komoditas berhasil diekspor ke Excel (.xlsx).`);
   };
 
   const handleExportSeluruhResponden = () => {
-    exportSeluruhRespondenToExcel(selectedProvinsi, KOMODITAS_LIST, database);
-    showToast('Seluruh data responden dari 89 kualitas/komoditas berhasil diekspor ke Excel (.xlsx).');
+    exportSeluruhRespondenToExcel(selectedProvinsi, komoditasList, database);
+    showToast(`Seluruh data responden dari ${komoditasList.length} kualitas/komoditas berhasil diekspor ke Excel (.xlsx).`);
   };
 
-  // Sync active detail modal
+  // Sync active detail modal (always resolve from unprojected currentKabupatenData so all raw respondents stay visible/editable)
   const activeDetailKab = detailModalKab
     ? currentKabupatenData.find((k) => k.id === detailModalKab.id || k.kode === detailModalKab.kode) || detailModalKab
     : null;
 
-  const anomalyCount = currentKabupatenData.filter(
+  const anomalyCount = projectedKabupatenData.filter(
     (d) =>
       (d.harga2027 > 0 && d.koefisienVariasi > 20) ||
       (d.harga2027 > 0 && d.harga2026 > 0 && (d.rasio > 120 || d.rasio < 80))
@@ -1581,40 +1654,46 @@ export default function App() {
                 setSelectedProvinsi(prov);
                 setSelectedKabupatenId(null);
               }}
-              komoditasList={KOMODITAS_LIST}
+              komoditasList={komoditasList}
               selectedKomoditas={selectedKomoditas}
               onSelectKomoditas={(kom) => {
-                const idx = KOMODITAS_LIST.findIndex((k) => k.kode === kom.kode);
+                const idx = komoditasList.findIndex((k) => k.kode === kom.kode);
                 if (idx >= 0) setKomoditasIndex(idx);
               }}
               currentIndex={komoditasIndex}
-              totalKomoditas={KOMODITAS_LIST.length}
+              totalKomoditas={komoditasList.length}
               onPrevKomoditas={handlePrevKomoditas}
               onNextKomoditas={handleNextKomoditas}
               onTampilkan={handleTampilkan}
               isLoading={isLoading}
               onDownloadSeluruhKualitas={handleExportSeluruhKualitas}
               onDownloadSeluruhResponden={handleExportSeluruhResponden}
-              data={currentKabupatenData}
+              data={projectedKabupatenData}
               globalSettings={globalSettings}
             />
 
             {/* Main Data Table with Responsive Scroll & Density */}
             <RekonTable
-              data={currentKabupatenData}
+              data={projectedKabupatenData}
               selectedKomoditas={selectedKomoditas}
               dbKey={currentKey}
               density={displaySettings.density}
+              comparisonMode={comparisonMode}
+              onChangeComparisonMode={setComparisonMode}
               onOpenDetail={(item) => {
-                setDetailModalKab(item);
-                setSelectedKabupatenId(item.id);
+                const rawItem =
+                  currentKabupatenData.find((k) => k.id === item.id || k.kode === item.kode) || item;
+                setDetailModalKab(rawItem);
+                setSelectedKabupatenId(rawItem.id);
               }}
               onOpenNote={(item) => {
                 if (!currentUser.isLoggedIn) {
                   setIsAuthModalOpen(true);
                   return;
                 }
-                setNoteModalKab(item);
+                const rawItem =
+                  currentKabupatenData.find((k) => k.id === item.id || k.kode === item.kode) || item;
+                setNoteModalKab(rawItem);
               }}
               onExportExcel={handleExportExcelTable}
               onPrint={handlePrint}
@@ -1630,10 +1709,12 @@ export default function App() {
 
             {/* Dynamic Bar Chart: Exactly synchronized with table sort order */}
             <GrafikRekonda
-              data={chartSortedData.length > 0 ? chartSortedData : currentKabupatenData}
+              data={chartSortedData.length > 0 ? chartSortedData : projectedKabupatenData}
               onSelectKabupaten={(item) => {
-                setSelectedKabupatenId(item.id);
-                setDetailModalKab(item);
+                const rawItem =
+                  currentKabupatenData.find((k) => k.id === item.id || k.kode === item.kode) || item;
+                setSelectedKabupatenId(rawItem.id);
+                setDetailModalKab(rawItem);
               }}
               selectedId={selectedKabupatenId}
             />
@@ -1643,10 +1724,12 @@ export default function App() {
           <AnomaliRekonTable
             database={database}
             density={displaySettings.density}
-            komoditasList={KOMODITAS_LIST}
+            komoditasList={komoditasList}
             provinsi={selectedProvinsi}
             selectedKomoditas={selectedKomoditas}
             currentUser={currentUser}
+            comparisonMode={comparisonMode}
+            onChangeComparisonMode={setComparisonMode}
             onOpenAuth={() => setIsAuthModalOpen(true)}
             onUpdateAnomali={handleUpdateAnomali}
             onOpenLkSewaAlat={(komKode, kabKode) => handleOpenLkModal(komKode, kabKode)}
@@ -1654,7 +1737,7 @@ export default function App() {
               handleChangeTipeSewa(targetDbKey, kabKode, null, nextTipe)
             }
             onOpenDetail={(kab, kom) => {
-              const idx = KOMODITAS_LIST.findIndex((k) => k.kode === kom.kode);
+              const idx = komoditasList.findIndex((k) => k.kode === kom.kode);
               if (idx >= 0) setKomoditasIndex(idx);
               setDetailModalKab(kab);
               setSelectedKabupatenId(kab.id);
@@ -1665,7 +1748,7 @@ export default function App() {
           <SimulasiRankingView
             database={database}
             provinsi={selectedProvinsi}
-            komoditasList={KOMODITAS_LIST}
+            komoditasList={komoditasList}
             activeTriwulan={globalSettings.defaultTriwulanAktif}
             currentUser={currentUser}
             onOpenAuth={() => setIsAuthModalOpen(true)}
@@ -1677,7 +1760,7 @@ export default function App() {
             isLoadingDocs={isLoadingDocs}
             docsError={docsError}
             currentUser={currentUser}
-            komoditasList={KOMODITAS_LIST}
+            komoditasList={komoditasList}
             onRefreshDocuments={loadSupabaseDocumentsAndState}
             onOpenAuth={() => setIsAuthModalOpen(true)}
             onSuccessToast={showToast}
@@ -1767,7 +1850,7 @@ export default function App() {
         onOpenAuth={() => setIsAuthModalOpen(true)}
         currentData={currentKabupatenData}
         database={database}
-        komoditasList={KOMODITAS_LIST}
+        komoditasList={komoditasList}
         provinsiKode={selectedProvinsi.kode}
         onApplyData={handleApplyUploadedData}
         selectedKomoditas={selectedKomoditas}
@@ -1796,7 +1879,7 @@ export default function App() {
         isOpen={lkModalState.isOpen}
         onClose={() => setLkModalState((prev) => ({ ...prev, isOpen: false }))}
         provinsi={selectedProvinsi}
-        komoditasList={KOMODITAS_LIST}
+        komoditasList={komoditasList}
         database={database}
         initialKomoditasKode={lkModalState.komoditasKode}
         initialKabupatenKode={lkModalState.kabupatenKode}

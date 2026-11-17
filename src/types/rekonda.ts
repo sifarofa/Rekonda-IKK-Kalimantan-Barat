@@ -74,6 +74,10 @@ export interface KabupatenRekon {
   tipeSewa?: TipeSewaAlat;
   lkSewaAlat?: LkSewaAlatData;
 
+  // Merek acuan & daftar responden yang ikut finalisasi IKK Rekonda 2026 (opsional)
+  merekAcuan2026?: string[];
+  finalRespondents2026?: string[];
+
   // Responden mikro
   respondents: RespondenData[];
 }
@@ -83,6 +87,13 @@ export interface Komoditas {
   nama: string;
   satuan: string;
   kategori: string;
+}
+
+export interface CommodityMetaOverride {
+  kode: string;
+  nama: string;
+  satuan?: string;
+  kategori?: string;
 }
 
 export interface Provinsi {
@@ -127,6 +138,8 @@ export interface RekondaGlobalSettings {
 }
 
 export type ActiveViewType = 'rekon_daerah' | 'anomali_rekon' | 'simulasi_ranking' | 'dokumen_arsip';
+
+export type ComparisonMode = 'all' | 'merek_acuan' | 'apple_to_apple';
 
 export const DEFAULT_GLOBAL_SETTINGS: RekondaGlobalSettings = {
   defaultTriwulanAktif: 'IV-2026',

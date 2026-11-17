@@ -13,7 +13,7 @@ import {
   Sparkles,
   RefreshCw
 } from 'lucide-react';
-import { KabupatenRekon, Komoditas, UserAuth } from '../types/rekonda';
+import { CommodityMetaOverride, KabupatenRekon, Komoditas, UserAuth } from '../types/rekonda';
 import { formatRupiahNumber, formatPercent } from '../utils/formatters';
 import {
   downloadTemplateTabel71,
@@ -40,7 +40,11 @@ interface UploadModalProps {
   onApplyData: (
     updatedDatabase: Record<string, KabupatenRekon[]>,
     sheetType: 'rekonda26' | 'tabel71',
-    summary?: { updatedCommoditiesCount: number; isMultiCommodity: boolean }
+    summary?: {
+      updatedCommoditiesCount: number;
+      isMultiCommodity: boolean;
+      commodityMetadata?: Record<string, CommodityMetaOverride>;
+    }
   ) => void;
   selectedKomoditas: Komoditas;
   onQuickLoginAsOwner?: () => void;
@@ -75,8 +79,17 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   if (!isOpen) return null;
 
   const parseResult = multiResult?.previewResult || null;
-  const previewKomObj =
+  const rawPreviewKomObj =
     komoditasList.find((k) => k.kode === multiResult?.previewKomoditasKode) || selectedKomoditas;
+  const uploadedMetaForPreview = multiResult?.commodityMetadata?.[rawPreviewKomObj.kode];
+  const previewKomObj = uploadedMetaForPreview
+    ? {
+        ...rawPreviewKomObj,
+        nama: uploadedMetaForPreview.nama || rawPreviewKomObj.nama,
+        satuan: uploadedMetaForPreview.satuan || rawPreviewKomObj.satuan,
+        kategori: uploadedMetaForPreview.kategori || rawPreviewKomObj.kategori
+      }
+    : rawPreviewKomObj;
 
   // Process uploaded rows across ALL commodities/qualities present in the file
   const runParser = (
@@ -114,13 +127,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         return;
       }
 
-      const previewKom =
+      const basePreviewKom =
         komoditasList.find((k) => k.kode === result.previewKomoditasKode) || selectedKomoditas;
+      const overrideMeta = result.commodityMetadata?.[basePreviewKom.kode];
+      const previewKom = overrideMeta
+        ? { ...basePreviewKom, nama: overrideMeta.nama || basePreviewKom.nama }
+        : basePreviewKom;
 
       if (tab === 'tabel71') {
+        const metaCount = result.commodityMetadata ? Object.keys(result.commodityMetadata).length : 0;
+        const namingNote =
+          metaCount > 0 ? ` & penamaan ${metaCount} komoditas/kualitas disesuaikan dengan file` : '';
         if (result.isMultiCommodity) {
           setSuccessInfo(
-            `Berhasil memproses ${result.totalRows.toLocaleString('id-ID')} baris data untuk SELURUH ${result.updatedCommoditiesCount} komoditas/kualitas (${result.totalAffectedKabEntries} data kab/kota terisi) ke kolom Harga Tahun Berjalan (2027). Pratinjau di bawah menampilkan [${previewKom.kode}] ${previewKom.nama}; seluruh ${result.updatedCommoditiesCount} komoditas akan otomatis diperbarui saat Anda klik Terapkan.`
+            `Berhasil memproses ${result.totalRows.toLocaleString('id-ID')} baris data untuk SELURUH ${result.updatedCommoditiesCount} komoditas/kualitas${namingNote} (${result.totalAffectedKabEntries} data kab/kota terisi) ke kolom Harga Tahun Berjalan (2027). Pratinjau di bawah menampilkan [${previewKom.kode}] ${previewKom.nama}; seluruh ${result.updatedCommoditiesCount} komoditas akan otomatis diperbarui saat Anda klik Terapkan.`
           );
         } else {
           setSuccessInfo(
@@ -294,7 +314,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
     onApplyData(multiResult.updatedDatabase, activeTab, {
       updatedCommoditiesCount: multiResult.updatedCommoditiesCount,
-      isMultiCommodity: multiResult.isMultiCommodity
+      isMultiCommodity: multiResult.isMultiCommodity,
+      commodityMetadata: activeTab === 'tabel71' ? multiResult.commodityMetadata : undefined
     });
     setSelectedFile(null);
     onClose();

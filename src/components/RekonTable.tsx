@@ -10,14 +10,23 @@ import {
   ArrowDown,
   CheckCircle2,
   ChevronRight,
-  Calculator
+  Calculator,
+  Layers
 } from 'lucide-react';
-import { KabupatenRekon, Komoditas, TipeSewaAlat, UserAuth, DisplayDensity } from '../types/rekonda';
+import {
+  ComparisonMode,
+  KabupatenRekon,
+  Komoditas,
+  TipeSewaAlat,
+  UserAuth,
+  DisplayDensity
+} from '../types/rekonda';
+import { ProjectedKabupatenRekon, normalizeBrand } from '../utils/rekonComparison';
 import { formatRupiahNumber, formatPercent } from '../utils/formatters';
 import { isSewaAlatKomoditas, getSewaAlatKabStatus } from '../utils/sewaAlatCalculator';
 
 interface RekonTableProps {
-  data: KabupatenRekon[];
+  data: (KabupatenRekon & Partial<ProjectedKabupatenRekon>)[];
   selectedKomoditas?: Komoditas;
   dbKey?: string;
   onOpenDetail: (item: KabupatenRekon) => void;
@@ -29,6 +38,8 @@ interface RekonTableProps {
   onSortedDataChange?: (sortedList: KabupatenRekon[]) => void;
   onOpenLkSewaAlat?: (item: KabupatenRekon) => void;
   onChangeTipeSewa?: (item: KabupatenRekon, nextTipe: TipeSewaAlat) => void;
+  comparisonMode?: ComparisonMode;
+  onChangeComparisonMode?: (mode: ComparisonMode) => void;
   currentUser: UserAuth;
   density?: DisplayDensity;
 }
@@ -59,6 +70,8 @@ export const RekonTable: React.FC<RekonTableProps> = ({
   onSortedDataChange,
   onOpenLkSewaAlat,
   onChangeTipeSewa,
+  comparisonMode = 'all',
+  onChangeComparisonMode,
   currentUser,
   density = 'normal'
 }) => {
@@ -241,10 +254,10 @@ export const RekonTable: React.FC<RekonTableProps> = ({
         </div>
       )}
 
-      {/* Table Toolbar (Excel, Cetak, Entries, Search) */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 mb-3 text-xs">
-        {/* Left: Excel & Cetak buttons */}
-        <div className="flex items-center gap-2">
+      {/* Table Toolbar (Excel, Cetak, Mode Perbandingan, Entries, Search) */}
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2.5 mb-3 text-xs">
+        {/* Left: Excel & Cetak buttons + Mode Perbandingan */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={onExportExcel}
@@ -261,7 +274,32 @@ export const RekonTable: React.FC<RekonTableProps> = ({
             <Printer className="w-3.5 h-3.5 text-sky-600" />
             <span>Cetak</span>
           </button>
-          <span className="text-[11px] text-slate-500 hidden md:inline ml-1">
+
+          {!isSewaAlat && onChangeComparisonMode && (
+            <div
+              className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-md px-2 py-1"
+              title="Ubah basis penghitungan Harga 2027 untuk perbandingan yang adil terhadap Harga 2026 tanpa menghapus data responden survei."
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="text-[11px] font-semibold text-slate-600 whitespace-nowrap hidden sm:inline">
+                Basis Hitung:
+              </span>
+              <select
+                value={comparisonMode}
+                onChange={(e) => {
+                  onChangeComparisonMode(e.target.value as ComparisonMode);
+                  setCurrentPage(1);
+                }}
+                className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
+              >
+                <option value="all">Semua Responden '27</option>
+                <option value="merek_acuan">Filter Merek Acuan '26</option>
+                <option value="apple_to_apple">Apple-to-Apple (Final '26)</option>
+              </select>
+            </div>
+          )}
+
+          <span className="text-[11px] text-slate-500 hidden xl:inline ml-1">
             Sortir: <strong className="text-slate-800">{sortField}</strong> ({sortDirection === 'asc' ? 'Naik' : 'Turun'})
           </span>
         </div>
@@ -312,6 +350,33 @@ export const RekonTable: React.FC<RekonTableProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Mode Perbandingan Note Strip */}
+      {!isSewaAlat && comparisonMode !== 'all' && (
+        <div className="mb-2.5 bg-indigo-50/70 border border-indigo-200/80 rounded-lg px-3 py-1.5 text-[11px] text-indigo-950 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <strong className="font-semibold">
+              {comparisonMode === 'merek_acuan'
+                ? "Mode Merek Acuan '26:"
+                : "Mode Apple-to-Apple (Final '26):"}
+            </strong>{' '}
+            <span className="text-indigo-900">
+              {comparisonMode === 'merek_acuan'
+                ? "Menghitung rata-rata sementara khusus responden sesuai Merek Acuan '26. Data responden lengkap tetap tersimpan di Detail."
+                : "Menghitung rata-rata sementara khusus responden yang ikut finalisasi IKK '26. Data responden lengkap tetap tersimpan di Detail."}
+            </span>
+          </div>
+          {onChangeComparisonMode && (
+            <button
+              type="button"
+              onClick={() => onChangeComparisonMode('all')}
+              className="text-[10.5px] font-semibold bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded px-2 py-0.5 cursor-pointer shrink-0"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Mobile Horizontal Scroll Indicator */}
       <div className="sm:hidden text-[10px] text-slate-500 flex items-center justify-between pb-1 px-0.5">
@@ -569,10 +634,32 @@ export const RekonTable: React.FC<RekonTableProps> = ({
                           ? `Hasil Sewa Murni LK dari harga survei All-In Rp ${formatRupiahNumber(
                               row.lkSewaAlat.hargaAwalSebelumLk
                             )}`
+                          : row.projectionNote
+                          ? row.projectionNote
+                          : (row.nonFinalRespCount ?? 0) > 0
+                          ? `Terdapat ${row.nonFinalRespCount} entri responden yang tahun lalu tidak ikut perhitungan final IKK Rekonda 2026.`
                           : undefined
                       }
                     >
                       <div>{row.harga2027 > 0 ? formatRupiahNumber(row.harga2027) : '-'}</div>
+                      {!isSewaAlat && row.isFilteredProjection && (
+                        <div className="text-[10px] font-sans font-medium text-indigo-700 mt-0.5">
+                          Terfilter
+                        </div>
+                      )}
+                      {!isSewaAlat && !row.isFilteredProjection && comparisonMode === 'all' && (row.nonFinalRespCount ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenDetail(row);
+                          }}
+                          title={`Ada ${row.nonFinalRespCount} entri responden yang tahun lalu tidak ikut finalisasi '26 (Webentry / non-acuan). Klik untuk melihat detail.`}
+                          className="text-[10px] font-sans font-medium text-amber-700 hover:text-amber-900 hover:underline mt-0.5 cursor-pointer block ml-auto"
+                        >
+                          +{row.nonFinalRespCount} non-final '26
+                        </button>
+                      )}
                       {sewaSt && (
                         sewaSt.total > 0 ? (
                           sewaSt.allPure ? (
@@ -651,10 +738,32 @@ export const RekonTable: React.FC<RekonTableProps> = ({
                     </td>
 
                     {/* 8. Nama Kualitas / Merek Dominan */}
-                    <td className={`${rowPaddingY} ${rowPaddingX} text-slate-700 truncate`} title={`Merek paling banyak muncul: ${row.harga2027 > 0 ? row.namaKualitas : '-'}`}>
+                    <td
+                      className={`${rowPaddingY} ${rowPaddingX} text-slate-700`}
+                      title={`Merek terbanyak '27: ${row.harga2027 > 0 ? row.namaKualitas : '-'}${
+                        row.activeMerekAcuan && row.activeMerekAcuan.length > 0
+                          ? ` | Merek Acuan Final '26: ${row.activeMerekAcuan.join(', ')}`
+                          : ''
+                      }`}
+                    >
                       <span className={`truncate block font-medium ${row.harga2027 > 0 && row.namaKualitas && row.namaKualitas !== '-' ? 'text-slate-800' : 'text-slate-400'}`}>
                         {row.harga2027 > 0 && row.namaKualitas && row.namaKualitas !== '-' ? row.namaKualitas : '-'}
                       </span>
+                      {row.activeMerekAcuan && row.activeMerekAcuan.length > 0 && (() => {
+                        const acuanText = row.activeMerekAcuan.join(', ');
+                        const matches = row.activeMerekAcuan.some(
+                          (b) => normalizeBrand(b) === normalizeBrand(row.namaKualitas || '')
+                        );
+                        return (
+                          <span
+                            className={`block truncate text-[10px] mt-0.5 ${
+                              matches ? 'text-slate-500' : 'text-amber-700 font-medium'
+                            }`}
+                          >
+                            Acuan '26: {acuanText}
+                          </span>
+                        );
+                      })()}
                     </td>
 
                     {/* 9. Harga 2026 (Tahun Lalu) */}

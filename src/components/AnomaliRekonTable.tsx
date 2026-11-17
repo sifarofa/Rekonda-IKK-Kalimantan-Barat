@@ -19,19 +19,34 @@ import {
   CheckCircle2,
   Clock,
   Filter,
-  Calculator
+  Calculator,
+  Layers
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { KabupatenRekon, StatusRekon, TipeSewaAlat, UserAuth, Komoditas, Provinsi, DisplayDensity } from '../types/rekonda';
+import {
+  ComparisonMode,
+  KabupatenRekon,
+  StatusRekon,
+  TipeSewaAlat,
+  UserAuth,
+  Komoditas,
+  Provinsi,
+  DisplayDensity
+} from '../types/rekonda';
 import { formatRupiahNumber, formatRupiahCurrency, formatPercent } from '../utils/formatters';
 import { isSewaAlatKomoditas, getSewaAlatKabStatus } from '../utils/sewaAlatCalculator';
+import {
+  ProjectedKabupatenRekon,
+  projectKabupatenByComparisonMode
+} from '../utils/rekonComparison';
 import { KABUPATEN_KALBAR_LIST } from '../data/kabupatenList';
 
 interface AnomaliItem {
   id: string;
   dbKey: string;
   komoditas: Komoditas;
-  kabupaten: KabupatenRekon;
+  kabupaten: ProjectedKabupatenRekon;
+  rawKabupaten: KabupatenRekon;
   isCVAnomaly: boolean;
   isRasioAnomaly: boolean;
   anomalyType: 'Ganda (CV & Rasio)' | 'CV Tinggi (> 20%)' | 'Rasio Ekstrem (< 80% / > 120%)';
@@ -48,6 +63,8 @@ interface AnomaliRekonTableProps {
   onOpenDetail: (kab: KabupatenRekon, komoditas: Komoditas) => void;
   onOpenLkSewaAlat?: (komKode: string, kabKode: string) => void;
   onChangeTipeSewa?: (dbKey: string, kabKode: string, nextTipe: TipeSewaAlat) => void;
+  comparisonMode?: ComparisonMode;
+  onChangeComparisonMode?: (mode: ComparisonMode) => void;
   density?: DisplayDensity;
 }
 
@@ -73,6 +90,8 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
   onOpenDetail,
   onOpenLkSewaAlat,
   onChangeTipeSewa,
+  comparisonMode = 'all',
+  onChangeComparisonMode,
   density = 'normal'
 }) => {
   // Determine role isolation
@@ -80,6 +99,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
   const isPemilik = currentUser.role === 'pemilik' || currentUser.isOwner;
 
   // Filters
+  const [jenisKuesionerFilter, setJenisKuesionerFilter] = useState<string>('all');
   const [selectedKomoditasFilter, setSelectedKomoditasFilter] = useState<string>('all');
   const [selectedKabupatenFilter, setSelectedKabupatenFilter] = useState<string>(
     isKabupatenRole && currentUser.kabupatenKode ? currentUser.kabupatenKode : 'all'
@@ -87,6 +107,44 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
   const [anomalyTypeFilter, setAnomalyTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
+
+  // Available Jenis Kuesioner categories in canonical order
+  const availableJenisKuesioner = useMemo(() => {
+    const canonicalOrder = [
+      'Material Natural dan Produk Lanjutannya',
+      'Material Pabrikan',
+      'Sewa Alat Berat dan Upah Jasa Konstruksi'
+    ];
+    const unique = Array.from(
+      new Set(komoditasList.map((k) => (k.kategori || '').trim()).filter(Boolean))
+    );
+    return unique.sort((a, b) => {
+      const ia = canonicalOrder.indexOf(a);
+      const ib = canonicalOrder.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [komoditasList]);
+
+  // Cascading komoditas options based on active Jenis Kuesioner
+  const filteredKomoditasOptions = useMemo(() => {
+    if (jenisKuesionerFilter === 'all') return komoditasList;
+    return komoditasList.filter((k) => (k.kategori || '').trim() === jenisKuesionerFilter);
+  }, [komoditasList, jenisKuesionerFilter]);
+
+  // Reset commodity selection if it does not belong to newly chosen Jenis Kuesioner
+  useEffect(() => {
+    if (jenisKuesionerFilter !== 'all' && selectedKomoditasFilter !== 'all') {
+      const stillValid = komoditasList.some(
+        (k) => k.kode === selectedKomoditasFilter && (k.kategori || '').trim() === jenisKuesionerFilter
+      );
+      if (!stillValid) {
+        setSelectedKomoditasFilter('all');
+      }
+    }
+  }, [jenisKuesionerFilter, selectedKomoditasFilter, komoditasList]);
 
   // Monitoring panel state for Pemilik
   const [showMonitoringPanel, setShowMonitoringPanel] = useState<boolean>(false);
@@ -110,12 +168,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
   >({});
   const [savedRowId, setSavedRowId] = useState<string | null>(null);
 
-  // Map of komoditas by code
-  const komoditasMap = useMemo(() => {
-    return new Map<string, Komoditas>(komoditasList.map((k) => [k.kode, k]));
-  }, [komoditasList]);
-
-  // Gather ALL anomalies across ALL commodities in the database
+  // Gather ALL anomalies across ALL commodities in the database (using ComparisonMode projection)
   const allAnomalies = useMemo(() => {
     const list: AnomaliItem[] = [];
 
@@ -123,7 +176,8 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
       const dbKey = `${provinsi.kode}_${kom.kode}`;
       const kabList = database[dbKey] || [];
 
-      kabList.forEach((kab) => {
+      kabList.forEach((rawKab) => {
+        const kab = projectKabupatenByComparisonMode(rawKab, kom.kode, comparisonMode);
         const isCV = kab.harga2027 > 0 && kab.koefisienVariasi > 20;
         const isRasio = kab.harga2027 > 0 && kab.harga2026 > 0 && (kab.rasio > 120 || kab.rasio < 80);
         const hasExplicitStatus = kab.statusRekon === 'rekon_selesai';
@@ -141,6 +195,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
             dbKey,
             komoditas: kom,
             kabupaten: kab,
+            rawKabupaten: rawKab,
             isCVAnomaly: isCV,
             isRasioAnomaly: isRasio,
             anomalyType
@@ -150,7 +205,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
     });
 
     return list;
-  }, [database, komoditasList, provinsi.kode]);
+  }, [database, komoditasList, provinsi.kode, comparisonMode]);
 
   // Total anomalies across Kalbar
   const totalAnomaliesCount = allAnomalies.length;
@@ -198,6 +253,11 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
       result = result.filter((item) => item.kabupaten.kode === selectedKabupatenFilter);
     }
 
+    // Filter Jenis Kuesioner
+    if (jenisKuesionerFilter !== 'all') {
+      result = result.filter((item) => (item.komoditas.kategori || '').trim() === jenisKuesionerFilter);
+    }
+
     // Filter Komoditas
     if (selectedKomoditasFilter !== 'all') {
       result = result.filter((item) => item.komoditas.kode === selectedKomoditasFilter);
@@ -228,6 +288,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
         (item) =>
           item.komoditas.nama.toLowerCase().includes(q) ||
           item.komoditas.kode.includes(q) ||
+          (item.komoditas.kategori || '').toLowerCase().includes(q) ||
           item.kabupaten.nama.toLowerCase().includes(q) ||
           item.kabupaten.kode.includes(q) ||
           (item.kabupaten.catatan && item.kabupaten.catatan.toLowerCase().includes(q))
@@ -300,6 +361,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
     allAnomalies,
     isKabupatenRole,
     currentUser.kabupatenKode,
+    jenisKuesionerFilter,
     selectedKomoditasFilter,
     selectedKabupatenFilter,
     anomalyTypeFilter,
@@ -393,6 +455,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
   const handleExportExcel = () => {
     const rows = filteredAndSortedData.map((item, idx) => ({
       'No': idx + 1,
+      'Jenis Kuesioner': item.komoditas.kategori || '-',
       'Kode Komoditas': item.komoditas.kode,
       'Nama Komoditas / Kualitas': item.komoditas.nama,
       'Satuan': item.komoditas.satuan,
@@ -402,6 +465,8 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
       'Harga 2026 (Rp)': item.kabupaten.harga2026,
       'Rasio (%)': item.kabupaten.rasio,
       'CV (%)': item.kabupaten.koefisienVariasi,
+      'Merek Acuan 2026': (item.kabupaten.activeMerekAcuan || []).join(', '),
+      'Jml Non-Final 2026': item.kabupaten.nonFinalRespCount || 0,
       'Tipe Anomali': item.anomalyType,
       'Status Rekon': item.kabupaten.statusRekon,
       'Catatan Lapangan': item.kabupaten.catatan || '',
@@ -590,7 +655,28 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {onChangeComparisonMode && (
+                <div
+                  className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-md px-2 py-1 text-xs"
+                  title="Ubah basis penghitungan Harga 2027 (Semua Responden vs Filter Merek Acuan '26 vs Apple-to-Apple Final '26) untuk melihat anomali sesungguhnya."
+                >
+                  <Layers className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                  <select
+                    value={comparisonMode}
+                    onChange={(e) => {
+                      onChangeComparisonMode(e.target.value as ComparisonMode);
+                      setCurrentPage(1);
+                    }}
+                    className="bg-transparent font-bold text-slate-800 focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">Basis: Semua Responden '27</option>
+                    <option value="merek_acuan">Basis: Filter Merek Acuan '26</option>
+                    <option value="apple_to_apple">Basis: Apple-to-Apple (Final '26)</option>
+                  </select>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={handleExportExcel}
@@ -613,8 +699,30 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
 
           {/* Filter Row */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2 text-xs">
+            {/* Filter Jenis Kuesioner */}
+            <div className="lg:col-span-2">
+              <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
+                Jenis Kuesioner:
+              </label>
+              <select
+                value={jenisKuesionerFilter}
+                onChange={(e) => {
+                  setJenisKuesionerFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-rose-500 cursor-pointer truncate"
+              >
+                <option value="all">Semua Kuesioner ({availableJenisKuesioner.length})</option>
+                {availableJenisKuesioner.map((kat) => (
+                  <option key={kat} value={kat}>
+                    {kat}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Filter Komoditas */}
-            <div className="lg:col-span-4">
+            <div className="lg:col-span-2">
               <label className="block text-[10px] font-bold text-slate-600 mb-0.5">
                 Kualitas / Komoditas:
               </label>
@@ -626,8 +734,8 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                 }}
                 className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-rose-500 cursor-pointer truncate"
               >
-                <option value="all">Semua Kualitas Rekon</option>
-                {komoditasList.map((k) => (
+                <option value="all">Semua Kualitas ({filteredKomoditasOptions.length})</option>
+                {filteredKomoditasOptions.map((k) => (
                   <option key={k.kode} value={k.kode}>
                     [{k.kode}] {k.nama} {k.satuan ? `(${k.satuan})` : ''}
                   </option>
@@ -884,8 +992,13 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                           <span className="text-[10px] text-slate-500 font-mono">
-                            Satuan: {item.komoditas.satuan || 'Satuan'}
+                            {item.komoditas.satuan ? `${item.komoditas.satuan}` : 'Satuan'}
                           </span>
+                          {item.komoditas.kategori && (
+                            <span className="text-[9.5px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 rounded px-1 py-0.2 truncate max-w-[165px]">
+                              {item.komoditas.kategori}
+                            </span>
+                          )}
                           {isSewaAlatItem && onChangeTipeSewa && sewaSt && (
                             <div className="inline-flex items-center gap-1">
                               <select
@@ -914,7 +1027,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                               {sewaSt.total > 0 && (
                                 <button
                                   type="button"
-                                  onClick={() => onOpenDetail(item.kabupaten, item.komoditas)}
+                                  onClick={() => onOpenDetail(item.rawKabupaten, item.komoditas)}
                                   title={`Konfirmasi per responden (${sewaSt.pureCount}/${sewaSt.total} responden sudah murni)`}
                                   className={`text-[9px] font-mono font-bold px-1 py-0.2 rounded border cursor-pointer transition-colors ${
                                     sewaSt.allPure
@@ -956,10 +1069,29 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                             ? `Hasil Sewa Murni LK dari harga All-In Rp ${formatRupiahNumber(
                                 item.kabupaten.lkSewaAlat.hargaAwalSebelumLk
                               )}`
+                            : item.kabupaten.projectionNote
+                            ? item.kabupaten.projectionNote
+                            : item.kabupaten.nonFinalRespCount > 0
+                            ? `Ada ${item.kabupaten.nonFinalRespCount} entri responden yang tahun lalu tidak ikut perhitungan final IKK Rekonda 2026.`
                             : undefined
                         }
                       >
                         <div>{item.kabupaten.harga2027 > 0 ? formatRupiahNumber(item.kabupaten.harga2027) : '-'}</div>
+                        {!isSewaAlatItem && item.kabupaten.isFilteredProjection && (
+                          <div className="text-[10px] font-sans font-medium text-indigo-700 mt-0.5">
+                            Terfilter
+                          </div>
+                        )}
+                        {!isSewaAlatItem && !item.kabupaten.isFilteredProjection && comparisonMode === 'all' && item.kabupaten.nonFinalRespCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenDetail(item.rawKabupaten, item.komoditas)}
+                            title={`Ada ${item.kabupaten.nonFinalRespCount} entri non-final 2026 (Webentry / bukan Merek Acuan). Klik untuk melihat detail.`}
+                            className="text-[10px] font-sans font-medium text-amber-700 hover:text-amber-900 hover:underline mt-0.5 cursor-pointer block ml-auto"
+                          >
+                            +{item.kabupaten.nonFinalRespCount} non-final '26
+                          </button>
+                        )}
                         {sewaSt && (
                           sewaSt.total > 0 ? (
                             sewaSt.allPure ? (
@@ -1091,7 +1223,7 @@ export const AnomaliRekonTable: React.FC<AnomaliRekonTableProps> = ({
                           )}
                           <button
                             type="button"
-                            onClick={() => onOpenDetail(item.kabupaten, item.komoditas)}
+                            onClick={() => onOpenDetail(item.rawKabupaten, item.komoditas)}
                             title="Lihat Detail Responden & Rekon"
                             className="p-1.5 rounded-md text-sky-700 hover:text-sky-800 bg-sky-50 hover:bg-sky-100 border border-sky-200 transition-colors cursor-pointer inline-flex items-center justify-center shadow-2xs"
                           >

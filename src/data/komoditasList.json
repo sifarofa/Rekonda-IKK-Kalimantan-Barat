@@ -70,9 +70,9 @@
     "kategori": "Material Natural dan Produk Lanjutannya"
   },
   {
-    "rawKode": "[0601] Bata Ringan Cellcon atau Hebel",
+    "rawKode": "[0601] Bata Ringan (SNI 8640-2018) Cellcon atau Hebel",
     "kode": "0601",
-    "nama": "Bata Ringan Cellcon atau Hebel",
+    "nama": "Bata Ringan (SNI 8640-2018) Cellcon atau Hebel",
     "satuan": "m3",
     "kategori": "Material Natural dan Produk Lanjutannya"
   },
@@ -91,16 +91,16 @@
     "kategori": "Material Natural dan Produk Lanjutannya"
   },
   {
-    "rawKode": "[0801] Seng Gelombang Ukuran (0,02 x 80 x 180) cm",
+    "rawKode": "[0801] Seng Gelombang Seng Gelombang BLJS 20 Ukuran (0,02 x 80 x 180) cm",
     "kode": "0801",
-    "nama": "Seng Gelombang Ukuran (0,02 x 80 x 180) cm",
+    "nama": "Seng Gelombang Seng Gelombang BLJS 20 Ukuran (0,02 x 80 x 180) cm",
     "satuan": "lembar",
     "kategori": "Material Pabrikan"
   },
   {
-    "rawKode": "[0802] Seng Gelombang Ukuran (0,03 x 80 x 180) cm",
+    "rawKode": "[0802] Seng Gelombang Seng Gelombang BLJS 30 Ukuran (0,03 x 80 x 180) cm",
     "kode": "0802",
-    "nama": "Seng Gelombang Ukuran (0,03 x 80 x 180) cm",
+    "nama": "Seng Gelombang Seng Gelombang BLJS 30 Ukuran (0,03 x 80 x 180) cm",
     "satuan": "lembar",
     "kategori": "Material Pabrikan"
   },
@@ -126,30 +126,30 @@
     "kategori": "Material Pabrikan"
   },
   {
-    "rawKode": "[1101] Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Polos (BJTP 24) Ukuran d = 6 mm; p = 12 m",
+    "rawKode": "[1101] Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Polos (BJTP 280) Ukuran d = 6 mm; p = 12 m",
     "kode": "1101",
-    "nama": "Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Polos (BJTP 24) Ukuran d = 6 mm; p = 12 m",
+    "nama": "Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Polos (BJTP 280) Ukuran d = 6 mm; p = 12 m",
     "satuan": "m",
     "kategori": "Material Pabrikan"
   },
   {
-    "rawKode": "[1102] Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Polos (BJTP 24) Ukuran d = 8 mm; p = 12 m",
+    "rawKode": "[1102] Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Polos (BJTP 280) Ukuran d = 8 mm; p = 12 m",
     "kode": "1102",
-    "nama": "Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Polos (BJTP 24) Ukuran d = 8 mm; p = 12 m",
+    "nama": "Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Polos (BJTP 280) Ukuran d = 8 mm; p = 12 m",
     "satuan": "m",
     "kategori": "Material Pabrikan"
   },
   {
-    "rawKode": "[1104] Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Ulir (BJTS 32) Ukuran d = 10 mm; p = 12 m",
+    "rawKode": "[1104] Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Ulir (BJTS 280) Ukuran d = 10 mm; p = 12 m",
     "kode": "1104",
-    "nama": "Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Ulir (BJTS 32) Ukuran d = 10 mm; p = 12 m",
+    "nama": "Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Ulir (BJTS 280) Ukuran d = 10 mm; p = 12 m",
     "satuan": "m",
     "kategori": "Material Pabrikan"
   },
   {
-    "rawKode": "[1105] Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Ulir (BJTS 32) Ukuran d = 16 mm; p = 12 m",
+    "rawKode": "[1105] Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Ulir (BJTS 280) Ukuran d = 16 mm; p = 12 m",
     "kode": "1105",
-    "nama": "Besi Beton (FULL SNI) SNI 07-2052-2002 Besi Beton Ulir (BJTS 32) Ukuran d = 16 mm; p = 12 m",
+    "nama": "Besi Beton (FULL SNI) SNI 2052-2024 Besi Beton Ulir (BJTS 280) Ukuran d = 16 mm; p = 12 m",
     "satuan": "m",
     "kategori": "Material Pabrikan"
   },
@@ -168,9 +168,9 @@
     "kategori": "Material Pabrikan"
   },
   {
-    "rawKode": "[1402] Seng Plat Seng Plat BJLS 20; L = 40",
+    "rawKode": "[1402] Seng Plat BJLS 20 (Tebal 0,20 mm); L = 40",
     "kode": "1402",
-    "nama": "Seng Plat Seng Plat BJLS 20; L = 40",
+    "nama": "Seng Plat BJLS 20 (Tebal 0,20 mm); L = 40",
     "satuan": "m",
     "kategori": "Material Pabrikan"
   },

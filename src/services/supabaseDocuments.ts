@@ -1,6 +1,11 @@
 import { supabase } from '../lib/supabase';
 import { AppDocument, AppDocumentMetadata } from '../types/documents';
-import { DisplaySettings, KabupatenRekon, RekondaGlobalSettings } from '../types/rekonda';
+import {
+  CommodityMetaOverride,
+  DisplaySettings,
+  KabupatenRekon,
+  RekondaGlobalSettings
+} from '../types/rekonda';
 import { RegisteredAdmin } from '../types/userAdmin';
 
 export const DOCUMENTS_BUCKET = 'documents';
@@ -464,6 +469,7 @@ export async function upsertRekondaBatchToSupabase(
 export async function fetchRekondaSettingsFromSupabase(): Promise<{
   globalConfig: Partial<RekondaGlobalSettings> | null;
   displayDefaults: Partial<DisplaySettings> | null;
+  commodityNames: Record<string, CommodityMetaOverride> | null;
 }> {
   const { data, error } = await supabase
     .from(REKONDA_SETTINGS_TABLE)
@@ -475,16 +481,19 @@ export async function fetchRekondaSettingsFromSupabase(): Promise<{
 
   let globalConfig: Partial<RekondaGlobalSettings> | null = null;
   let displayDefaults: Partial<DisplaySettings> | null = null;
+  let commodityNames: Record<string, CommodityMetaOverride> | null = null;
 
   for (const row of data || []) {
     if (row.key === 'global_config' && row.value && typeof row.value === 'object') {
       globalConfig = row.value as Partial<RekondaGlobalSettings>;
     } else if (row.key === 'display_defaults' && row.value && typeof row.value === 'object') {
       displayDefaults = row.value as Partial<DisplaySettings>;
+    } else if (row.key === 'commodity_names' && row.value && typeof row.value === 'object') {
+      commodityNames = row.value as Record<string, CommodityMetaOverride>;
     }
   }
 
-  return { globalConfig, displayDefaults };
+  return { globalConfig, displayDefaults, commodityNames };
 }
 
 export async function upsertRekondaSettingToSupabase<T>(

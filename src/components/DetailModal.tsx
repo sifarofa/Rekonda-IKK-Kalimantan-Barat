@@ -11,13 +11,17 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Lock,
   Calculator
 } from 'lucide-react';
 import { KabupatenRekon, RespondenData, Komoditas, TipeSewaAlat, UserAuth } from '../types/rekonda';
 import { formatRupiahNumber, formatRupiahCurrency, formatPercent } from '../utils/formatters';
 import { getSewaAlatKabStatus, isSewaAlatKomoditas } from '../utils/sewaAlatCalculator';
-import responden2026LookupRaw from '../data/responden2026Lookup.json';
+import {
+  getKab2026RefMeta,
+  getRespondent2026Eval,
+  normalizeBrand,
+  Respondent2026Eval
+} from '../utils/rekonComparison';
 
 interface DetailModalProps {
   isOpen: boolean;
@@ -47,72 +51,7 @@ interface DetailModalProps {
 }
 
 type RespondentSortField = 'tahun' | 'triwulan' | 'nama' | 'merk' | 'harga';
-
-interface LookupEntry {
-  nama: string;
-  avgHarga: number;
-  twPrices?: Record<string, number>;
-  source?: string;
-}
-
-const responden2026Lookup = responden2026LookupRaw as Record<string, LookupEntry>;
-
-const normalizeStr = (str: string) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-const getPrevYearRespondentData = (
-  kabKode: string,
-  qualKode: string,
-  resp: RespondenData
-): { harga: number | null; sourceText: string | null } => {
-  const cleanKab = (kabKode || '').trim();
-  const cleanQual = (qualKode || '').trim();
-  const normName = normalizeStr(resp.nama);
-  const normId = normalizeStr(resp.id);
-
-  // Key combinations
-  const keyByName = `${cleanKab}_${cleanQual}_${normName}`;
-  const keyById = `${cleanKab}_${cleanQual}_${normId}`;
-
-  let match: LookupEntry | undefined = responden2026Lookup[keyByName] || responden2026Lookup[keyById];
-
-  // Fuzzy match if direct match not found
-  if (!match && normName.length >= 4) {
-    const prefix = `${cleanKab}_${cleanQual}_`;
-    for (const k in responden2026Lookup) {
-      if (k.startsWith(prefix)) {
-        const sub = k.slice(prefix.length);
-        if (sub.includes(normName) || normName.includes(sub)) {
-          match = responden2026Lookup[k];
-          break;
-        }
-      }
-    }
-  }
-
-  if (!match) {
-    return { harga: null, sourceText: null };
-  }
-
-  // Target quarter mapping
-  let targetQuarterKey = '';
-  if (resp.tahun === 2027 && resp.triwulan === 1) targetQuarterKey = '2026_1';
-  else if (resp.tahun === 2027 && resp.triwulan === 2) targetQuarterKey = '2026_2';
-  else if (resp.tahun === 2026 && resp.triwulan === 3) targetQuarterKey = '2025_3';
-  else if (resp.tahun === 2026 && resp.triwulan === 4) targetQuarterKey = '2025_4';
-  else targetQuarterKey = `2026_${resp.triwulan}`;
-
-  let prevPrice: number | null = null;
-  if (match.twPrices && match.twPrices[targetQuarterKey] && match.twPrices[targetQuarterKey] > 0) {
-    prevPrice = match.twPrices[targetQuarterKey];
-  } else if (match.avgHarga && match.avgHarga > 0) {
-    prevPrice = match.avgHarga;
-  }
-
-  return {
-    harga: prevPrice,
-    sourceText: (match.source === 'rekonnas' || match.source === 'IKK Rekonda') ? 'IKK Rekonda' : 'IKK Webentry'
-  };
-};
+type Status2026Filter = 'all' | 'final' | 'merek_acuan' | 'non_final';
 
 export const DetailModal: React.FC<DetailModalProps> = ({
   isOpen,
@@ -140,6 +79,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
   );
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMerk, setSelectedMerk] = useState<string>('all');
+  const [status2026Filter, setStatus2026Filter] = useState<Status2026Filter>('all');
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [isEditingNote, setIsEditingNote] = useState<boolean>(false);
@@ -149,6 +89,88 @@ export const DetailModal: React.FC<DetailModalProps> = ({
   // Sorting inside respondent table
   const [sortField, setSortField] = useState<RespondentSortField>('triwulan');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  // 2026 Reference Meta (Merek Acuan & Final Respondents)
+  const refMeta26 = useMemo(
+    () => getKab2026RefMeta(kabupaten.kode, komoditas.kode, kabupaten),
+    [kabupaten, komoditas.kode]
+  );
+
+  const normalizedAcuanSet = useMemo(
+    () => new Set(refMeta26.merekAcuanList.map((b) => normalizeBrand(b))),
+    [refMeta26.merekAcuanList]
+  );
+
+  // Precompute 2026 evaluation for every respondent row
+  const respondentEvalMap = useMemo(() => {
+    const map = new Map<string, Respondent2026Eval>();
+    (kabupaten?.respondents || []).forEach((r) => {
+      map.set(r.id, getRespondent2026Eval(kabupaten.kode, komoditas.kode, r, kabupaten));
+    });
+    return map;
+  }, [kabupaten, komoditas.kode]);
+
+  const evalSummary = useMemo(() => {
+    const resList = kabupaten?.respondents || [];
+    let finalCount = 0;
+    let nonFinalWebCount = 0;
+    let nonFinalMerekCount = 0;
+    let baruCount = 0;
+    let acuanCount = 0;
+    const finalPrices: number[] = [];
+    const acuanPrices: number[] = [];
+
+    resList.forEach((r) => {
+      const ev = respondentEvalMap.get(r.id);
+      if (!ev) return;
+      if (ev.status2026 === 'final') {
+        finalCount++;
+        if (r.harga > 0) finalPrices.push(r.harga);
+      } else if (ev.status2026 === 'non_final_webentry') {
+        nonFinalWebCount++;
+      } else if (ev.status2026 === 'non_final_merek') {
+        nonFinalMerekCount++;
+      } else {
+        baruCount++;
+      }
+      if (ev.matchesMerekAcuan) {
+        acuanCount++;
+        if (r.harga > 0) acuanPrices.push(r.harga);
+      }
+    });
+
+    const finalAvg =
+      finalPrices.length > 0
+        ? Math.round(finalPrices.reduce((a, b) => a + b, 0) / finalPrices.length)
+        : 0;
+    const finalRasio =
+      finalAvg > 0 && kabupaten.harga2026 > 0
+        ? parseFloat(((finalAvg / kabupaten.harga2026) * 100).toFixed(2))
+        : 0;
+
+    const acuanAvg =
+      acuanPrices.length > 0
+        ? Math.round(acuanPrices.reduce((a, b) => a + b, 0) / acuanPrices.length)
+        : 0;
+    const acuanRasio =
+      acuanAvg > 0 && kabupaten.harga2026 > 0
+        ? parseFloat(((acuanAvg / kabupaten.harga2026) * 100).toFixed(2))
+        : 0;
+
+    return {
+      total: resList.length,
+      finalCount,
+      nonFinalWebCount,
+      nonFinalMerekCount,
+      baruCount,
+      nonFinalTotal: nonFinalWebCount + nonFinalMerekCount + baruCount,
+      acuanCount,
+      finalAvg,
+      finalRasio,
+      acuanAvg,
+      acuanRasio
+    };
+  }, [kabupaten?.respondents, kabupaten?.harga2026, respondentEvalMap]);
 
   // Extract unique brands for brand filter
   const availableMerks = useMemo(() => {
@@ -161,11 +183,13 @@ export const DetailModal: React.FC<DetailModalProps> = ({
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [kabupaten?.respondents]);
 
-  // Sync note and reset brand filter when kabupaten changes
+  // Sync note and reset filters when kabupaten changes
   React.useEffect(() => {
     setNoteContent(kabupaten?.catatan || '');
     setIsEditingNote(false);
     setSelectedMerk('all');
+    setStatus2026Filter('all');
+    setCurrentPage(1);
   }, [kabupaten?.id, kabupaten?.catatan]);
 
   const handleSort = (field: RespondentSortField) => {
@@ -184,6 +208,15 @@ export const DetailModal: React.FC<DetailModalProps> = ({
     // Filter by Brand / Merek
     if (selectedMerk !== 'all') {
       list = list.filter((r) => (r.merk || '').trim().toLowerCase() === selectedMerk.trim().toLowerCase());
+    }
+
+    // Filter by 2026 Final Participation Status
+    if (status2026Filter === 'final') {
+      list = list.filter((r) => respondentEvalMap.get(r.id)?.status2026 === 'final');
+    } else if (status2026Filter === 'merek_acuan') {
+      list = list.filter((r) => respondentEvalMap.get(r.id)?.matchesMerekAcuan);
+    } else if (status2026Filter === 'non_final') {
+      list = list.filter((r) => respondentEvalMap.get(r.id)?.status2026 !== 'final');
     }
 
     if (searchTerm.trim() !== '') {
@@ -210,7 +243,15 @@ export const DetailModal: React.FC<DetailModalProps> = ({
     });
 
     return list;
-  }, [kabupaten?.respondents, selectedMerk, searchTerm, sortField, sortDir]);
+  }, [kabupaten?.respondents, selectedMerk, status2026Filter, respondentEvalMap, searchTerm, sortField, sortDir]);
+
+  const filteredAvgStats = useMemo(() => {
+    const valid = sortedAndFilteredRespondents.map((r) => r.harga).filter((p) => p > 0);
+    if (valid.length === 0) return null;
+    const avg = Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
+    const rasio = kabupaten.harga2026 > 0 ? parseFloat(((avg / kabupaten.harga2026) * 100).toFixed(2)) : 0;
+    return { avg, rasio, count: valid.length };
+  }, [sortedAndFilteredRespondents, kabupaten.harga2026]);
 
   // Pagination
   const totalEntries = sortedAndFilteredRespondents.length;
@@ -345,10 +386,113 @@ export const DetailModal: React.FC<DetailModalProps> = ({
               </div>
             </div>
 
-            <div className="text-slate-500 text-[11px] font-mono">
-              Total {kabupaten.respondents.length} entri responden survei
+            <div className="flex flex-col sm:items-end gap-1">
+              <div className="text-slate-500 text-[11px] font-mono">
+                Total {kabupaten.respondents.length} entri responden survei
+              </div>
+              {(selectedMerk !== 'all' || status2026Filter !== 'all' || searchTerm.trim() !== '') && filteredAvgStats && (
+                <div className="text-[11px] font-mono font-bold bg-indigo-50 text-indigo-900 border border-indigo-200 px-2 py-0.5 rounded">
+                  Hasil Filter ({filteredAvgStats.count} entri): {formatRupiahCurrency(filteredAvgStats.avg)}
+                  {kabupaten.harga2026 > 0 ? ` · Rasio ${formatPercent(filteredAvgStats.rasio)}%` : ''}
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Ringkasan Basis Perbandingan '26 vs '27 (Clean Compact Strip) */}
+          {!isSewaAlat &&
+            kabupaten.respondents.length > 0 &&
+            (evalSummary.nonFinalTotal > 0 || refMeta26.merekAcuanList.length > 0) && (
+              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-[11px] flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-slate-600">
+                  <span className="font-semibold text-slate-800">Basis '26 vs '27:</span>
+                  {refMeta26.merekAcuanList.length > 0 && (
+                    <span
+                      className="text-indigo-700 font-medium"
+                      title={`Merek acuan pada perhitungan final IKK Rekonda 2026: ${refMeta26.merekAcuanList.join(', ')}`}
+                    >
+                      Acuan '26: <strong className="font-mono">{refMeta26.merekAcuanList.join(', ')}</strong>
+                    </span>
+                  )}
+                  {refMeta26.merekAcuanList.length > 0 && evalSummary.nonFinalTotal > 0 && (
+                    <span className="text-slate-300">·</span>
+                  )}
+                  {evalSummary.nonFinalTotal > 0 && (
+                    <span
+                      className="text-slate-500"
+                      title="Sebagian responden pada pengumpulan 2027 tidak masuk perhitungan final 2026 (Webentry, non-acuan, atau responden baru). Seluruh entri tetap tersimpan."
+                    >
+                      {[
+                        evalSummary.finalCount > 0 ? `${evalSummary.finalCount} Final '26` : null,
+                        evalSummary.nonFinalWebCount > 0 ? `${evalSummary.nonFinalWebCount} Webentry` : null,
+                        evalSummary.nonFinalMerekCount > 0 ? `${evalSummary.nonFinalMerekCount} Non-Acuan` : null,
+                        evalSummary.baruCount > 0 ? `${evalSummary.baruCount} Baru '27` : null
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  )}
+                </div>
+
+                <div className="inline-flex flex-wrap items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStatus2026Filter('all');
+                      setSelectedMerk('all');
+                      setCurrentPage(1);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10.5px] font-semibold transition-colors cursor-pointer ${
+                      status2026Filter === 'all' && selectedMerk === 'all'
+                        ? 'bg-slate-800 text-white'
+                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                    }`}
+                  >
+                    Semua ({evalSummary.total})
+                  </button>
+                  {evalSummary.finalCount > 0 && evalSummary.finalCount < evalSummary.total && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatus2026Filter('final');
+                        setSelectedMerk('all');
+                        setCurrentPage(1);
+                      }}
+                      title="Hitung rata-rata khusus responden yang ikut perhitungan final IKK Rekonda 2026 (Apple-to-Apple)"
+                      className={`px-2 py-0.5 rounded text-[10.5px] font-semibold transition-colors cursor-pointer ${
+                        status2026Filter === 'final'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-white text-emerald-700 hover:bg-emerald-50 border border-slate-200'
+                      }`}
+                    >
+                      Final '26: Rp {formatRupiahNumber(evalSummary.finalAvg)}
+                      {evalSummary.finalRasio > 0 ? ` (${formatPercent(evalSummary.finalRasio)}%)` : ''}
+                    </button>
+                  )}
+                  {refMeta26.merekAcuanList.length > 0 &&
+                    evalSummary.acuanCount > 0 &&
+                    evalSummary.acuanCount < evalSummary.total && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStatus2026Filter('merek_acuan');
+                          setSelectedMerk('all');
+                          setCurrentPage(1);
+                        }}
+                        title={`Hitung rata-rata khusus responden bermerek acuan (${refMeta26.merekAcuanList.join(', ')})`}
+                        className={`px-2 py-0.5 rounded text-[10.5px] font-semibold transition-colors cursor-pointer ${
+                          status2026Filter === 'merek_acuan'
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-white text-indigo-700 hover:bg-indigo-50 border border-slate-200'
+                        }`}
+                      >
+                        Acuan '26: Rp {formatRupiahNumber(evalSummary.acuanAvg)}
+                        {evalSummary.acuanRasio > 0 ? ` (${formatPercent(evalSummary.acuanRasio)}%)` : ''}
+                      </button>
+                    )}
+                </div>
+              </div>
+            )}
 
           {/* Per-Respondent Sewa Alat Confirmation Banner (Codes 5101 - 5803) */}
           {isSewaAlat && kabSewaStatus && (
@@ -470,14 +614,40 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                     setSelectedMerk(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="bg-white border border-slate-300 text-slate-800 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-rose-500 cursor-pointer max-w-[200px] truncate font-medium"
+                  className="bg-white border border-slate-300 text-slate-800 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-rose-500 cursor-pointer max-w-[210px] truncate font-medium"
                 >
                   <option value="all">Semua Merek ({availableMerks.length > 0 ? availableMerks.length : 'Semua'})</option>
-                  {availableMerks.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
+                  {availableMerks.map((m) => {
+                    const isAcuan = normalizedAcuanSet.has(normalizeBrand(m));
+                    return (
+                      <option key={m} value={m}>
+                        {isAcuan ? `★ ${m} (Acuan '26)` : m}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Filter Status Finalisasi 2026 */}
+              <div className="flex items-center gap-1.5">
+                <label htmlFor="filter-status26" className="font-semibold text-slate-700 whitespace-nowrap">
+                  Status '26:
+                </label>
+                <select
+                  id="filter-status26"
+                  value={status2026Filter}
+                  onChange={(e) => {
+                    setStatus2026Filter(e.target.value as Status2026Filter);
+                    setCurrentPage(1);
+                  }}
+                  className="bg-white border border-slate-300 text-slate-800 text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-rose-500 cursor-pointer font-medium"
+                >
+                  <option value="all">Semua ({evalSummary.total})</option>
+                  <option value="final">✓ Ikut Final '26 ({evalSummary.finalCount})</option>
+                  {refMeta26.merekAcuanList.length > 0 && (
+                    <option value="merek_acuan">★ Merek Acuan '26 ({evalSummary.acuanCount})</option>
+                  )}
+                  <option value="non_final">⚠ Non-Final '26 / Baru ({evalSummary.nonFinalTotal})</option>
                 </select>
               </div>
 
@@ -582,7 +752,9 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   </tr>
                 ) : (
                   currentRows.map((item, idx) => {
-                    const prevData = getPrevYearRespondentData(kabupaten.kode, komoditas.kode, item);
+                    const prevData =
+                      respondentEvalMap.get(item.id) ||
+                      getRespondent2026Eval(kabupaten.kode, komoditas.kode, item, kabupaten);
                     const prevHarga = prevData.harga;
                     const respRasio = prevHarga && prevHarga > 0 ? (item.harga / prevHarga) * 100 : null;
                     const hasLkMurni =
@@ -591,11 +763,13 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                       Boolean(item.lkSewaAlat) &&
                       (item.lkSewaAlat?.hasilSewaMurniBulan ?? 0) > 0;
 
+                    const isNonFinal = prevData.status2026 !== 'final';
+
                     return (
                       <tr
                         key={item.id}
                         className={`hover:bg-slate-50 transition-colors ${
-                          idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'
+                          idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'
                         }`}
                       >
                         <td className="py-2 px-2.5 text-center font-mono font-medium text-slate-700">
@@ -607,8 +781,16 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                         <td className="py-2 px-3 font-semibold text-slate-900">
                           {item.nama}
                         </td>
-                        <td className="py-2 px-3 text-slate-600">
-                          {item.merk || '-'}
+                        <td className="py-2 px-3 text-slate-700">
+                          <div>{item.merk || '-'}</div>
+                          {refMeta26.merekAcuanList.length > 0 && prevData.matchesMerekAcuan && (
+                            <div
+                              className="text-[10px] font-medium text-indigo-600 mt-0.5"
+                              title={`Sesuai Merek Acuan Final 2026: ${refMeta26.merekAcuanList.join(', ')}`}
+                            >
+                              • Acuan '26
+                            </div>
+                          )}
                         </td>
                         <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 tabular-nums">
                           <div>{formatRupiahNumber(item.harga)}</div>
@@ -630,11 +812,49 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                         </td>
                         <td className="py-2 px-3 text-right font-mono font-medium text-slate-700 tabular-nums bg-slate-50/60">
                           {prevHarga !== null ? (
-                            <span title={prevData.sourceText ? `Sumber: ${prevData.sourceText}` : undefined}>
-                              {formatRupiahNumber(prevHarga)}
-                            </span>
+                            <div>
+                              <span
+                                className={isNonFinal ? 'text-slate-500' : 'text-slate-800 font-semibold'}
+                                title={
+                                  prevData.sourceText
+                                    ? `Sumber: ${prevData.sourceText}${isNonFinal ? ' (Tidak ikut hitungan final 2026)' : ' (Ikut hitungan final 2026)'}`
+                                    : undefined
+                                }
+                              >
+                                {formatRupiahNumber(prevHarga)}
+                              </span>
+                              {!isSewaAlat && (
+                                <div
+                                  className={`font-sans text-[10px] font-medium mt-0.5 ${
+                                    prevData.status2026 === 'final'
+                                      ? 'text-emerald-700'
+                                      : 'text-amber-700'
+                                  }`}
+                                  title={
+                                    prevData.status2026 === 'final'
+                                      ? 'Responden ini masuk dalam perhitungan final IKK Rekonda 2026.'
+                                      : prevData.status2026 === 'non_final_webentry'
+                                      ? 'Responden ini tahun lalu hanya tercatat di Webentry dan tidak ikut perhitungan final IKK Rekonda 2026.'
+                                      : `Merek berbeda dari Merek Acuan final 2026 (${refMeta26.merekAcuanList.join(', ')}).`
+                                  }
+                                >
+                                  {prevData.status2026 === 'final'
+                                    ? "Final '26"
+                                    : prevData.status2026 === 'non_final_webentry'
+                                    ? 'Webentry (Non-Final)'
+                                    : "Non-Acuan '26"}
+                                </div>
+                              )}
+                            </div>
                           ) : (
-                            <span className="text-slate-400 font-mono" title="Responden tidak ditemukan di database 2026">-</span>
+                            <div>
+                              <span className="text-slate-400 font-mono" title="Responden tidak ditemukan di database 2026">-</span>
+                              {!isSewaAlat && (
+                                <div className="font-sans text-[10px] text-slate-400 mt-0.5">
+                                  Baru '27
+                                </div>
+                              )}
+                            </div>
                           )}
                         </td>
                         <td className="py-2 px-2.5 text-right font-mono tabular-nums">
